@@ -50,15 +50,30 @@ export default function FilterBar({
     }
   }, [setSelectedRegion, setSelectedLocation]);
   
-  // Memoized reset filter handler
+  // Reset to Jakarta Selatan default view
   const handleResetFilter = useCallback(() => {
     setSelectedLocation(null);
-    // Reset region to "Semua Wilayah" if your RegionDropdown has this default option
+    setSearchQuery('');
+    setLocalSearchQuery('');
+    
+    // Set to default Jakarta Selatan region
     if (setSelectedRegion) {
+      // Either reset to "all" or you can create a default Jakarta Selatan region
       const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
       setSelectedRegion(defaultRegion);
     }
-  }, [setSelectedLocation, setSelectedRegion]);
+  }, [setSelectedLocation, setSelectedRegion, setSearchQuery]);
+  
+  // Function to export current data as CSV
+  const handleExportData = () => {
+    // You could implement actual export functionality here
+    alert('Data akan diekspor (fungsi belum diimplementasikan)');
+  };
+  
+  // Create Jakarta Selatan filter label if no specific filters are applied
+  const isDefaultJakselView = !searchQuery && 
+    (!selectedRegion || selectedRegion.id === 'all') && 
+    !selectedLocation;
   
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
@@ -82,7 +97,10 @@ export default function FilterBar({
             <span>Filter</span>
           </button>
           
-          <button className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50">
+          <button 
+            className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50"
+            onClick={handleExportData}
+          >
             <Download size={16} />
             <span>Export</span>
           </button>
@@ -126,14 +144,19 @@ export default function FilterBar({
       </div>
       
       {/* Active Location Filter Indicator */}
-      {(selectedRegion && selectedRegion.id !== 'all') || selectedLocation ? (
+      {isDefaultJakselView ? (
+        <div className="mt-2 text-sm text-gray-500">
+          Filter lokasi default: Kota Jakarta Selatan
+          {/* No reset button needed for default view */}
+        </div>
+      ) : (selectedRegion && selectedRegion.id !== 'all') || selectedLocation ? (
         <div className="mt-2 text-sm text-gray-500">
           Filter lokasi aktif: {selectedLocation?.name || selectedRegion?.name}
           <button 
             onClick={handleResetFilter}
             className="ml-2 text-blue-500 hover:underline"
           >
-            Reset
+            Reset ke Jakarta Selatan
           </button>
         </div>
       ) : null}

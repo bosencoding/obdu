@@ -27,9 +27,20 @@ const TableSection = dynamic(() => import('@/components/TableSection'), {
 
 // Main Dashboard content component
 export default function ClientPage() {
-  // State for filters
+  // State for filters (default to Jakarta Selatan)
   const [searchQuery, setSearchQuery] = useState('');
   const [filterYear, setFilterYear] = useState('2025');
+  
+  // Create a default Jakarta Selatan region
+  const defaultJakselRegion = {
+    id: 'region-jaksel',
+    name: 'Kota Jakarta Selatan', 
+    provinsi: 'DKI Jakarta', 
+    type: 'Kota', 
+    count: 542
+  };
+  
+  // Initialize with null, but will be set to either Jakarta Selatan or "all" by RegionDropdown
   const [selectedRegion, setSelectedRegion] = useState(null);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [isPending, startTransition] = useTransition();
@@ -49,6 +60,11 @@ export default function ClientPage() {
     // Add filter year
     if (filterYear) {
       result.year = parseInt(filterYear);
+    }
+    
+    // Add search query if provided
+    if (searchQuery) {
+      result.search = searchQuery;
     }
     
     // Add region filter if selected
@@ -78,8 +94,15 @@ export default function ClientPage() {
       }
     }
     
+    // If no specific filter is selected, default to Jakarta Selatan
+    if (!searchQuery && !selectedRegion && !selectedLocation) {
+      result.provinsi = 'DKI Jakarta';
+      result.daerahTingkat = 'Kota';
+      result.kotaKab = 'Jakarta Selatan';
+    }
+    
     return result;
-  }, [filterYear, selectedRegion, selectedLocation]);
+  }, [filterYear, selectedRegion, selectedLocation, searchQuery]);
   
   // Fetch dashboard data when filters change
   useEffect(() => {

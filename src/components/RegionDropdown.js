@@ -10,6 +10,14 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
 
   // Default "Semua Wilayah" option
   const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
+  // Default Jakarta Selatan option
+  const jakartaSelatanRegion = { 
+    id: 'region-jaksel',
+    name: 'Kota Jakarta Selatan', 
+    provinsi: 'DKI Jakarta', 
+    type: 'Kota', 
+    count: 542
+  };
 
   useEffect(() => {
     async function fetchRegions() {
@@ -20,13 +28,24 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
         // Use the API service function
         const data = await getRegionsList();
         
+        // Find if Jakarta Selatan already exists in the data
+        const jakselExists = data.some(region => 
+          region.name === 'Kota Jakarta Selatan' || 
+          (region.type === 'Kota' && region.name.includes('Jakarta Selatan'))
+        );
+        
+        // Add Jakarta Selatan at the top if it doesn't exist
+        if (!jakselExists) {
+          data.unshift(jakartaSelatanRegion);
+        }
+        
         // Add default "Semua Wilayah" option
         setRegions([defaultRegion, ...data]);
       } catch (err) {
         console.error('Error fetching regions:', err);
         setError('Gagal memuat data wilayah');
-        // Provide fallback data
-        setRegions([defaultRegion]);
+        // Provide fallback data with Jakarta Selatan
+        setRegions([defaultRegion, jakartaSelatanRegion]);
       } finally {
         setIsLoading(false);
       }
@@ -38,7 +57,14 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
   // Set default region if not already set
   useEffect(() => {
     if (!selectedRegion && regions.length > 0) {
-      setSelectedRegion(regions[0]);
+      // Default to Jakarta Selatan instead of "all"
+      const jakselRegion = regions.find(r => 
+        r.name === 'Kota Jakarta Selatan' || 
+        (r.type === 'Kota' && r.name.includes('Jakarta Selatan'))
+      );
+      
+      // Use Jakarta Selatan if found, otherwise use "all"
+      setSelectedRegion(jakselRegion || regions[0]);
     }
   }, [regions, selectedRegion, setSelectedRegion]);
 
@@ -64,7 +90,7 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
           <MapPin size={16} className="text-gray-500" />
         )}
         <span className="text-sm flex-grow text-left truncate">
-          {isLoading ? 'Memuat...' : (selectedRegion ? selectedRegion.name : 'Pilih Wilayah')}
+          {isLoading ? 'Memuat...' : (selectedRegion ? selectedRegion.name : 'Kota Jakarta Selatan')}
         </span>
         <ChevronDown size={16} className="text-gray-500" />
       </button>
@@ -91,7 +117,7 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
                   </span>
                 )}
               </div>
-              {region.provinsi && region.id !== 'all' && region.id.startsWith('region-') && (
+              {region.provinsi && region.id !== 'all' && (
                 <div className="text-xs text-gray-500">{region.provinsi}</div>
               )}
             </button>
