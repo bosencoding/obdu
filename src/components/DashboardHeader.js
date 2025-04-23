@@ -6,8 +6,8 @@ export default function DashboardHeader() {
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center overflow-hidden">
           <Image 
-            src="/logo-bogor.png" 
-            alt="Logo Kota Bogor" 
+            src="/logo_uzone.jpg" 
+            alt="Uzone Single Logo" 
             width={40} 
             height={40}
             className="rounded-full"

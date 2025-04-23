@@ -1,31 +1,35 @@
 import { BarChart3, Package, FileText, AlertCircle } from 'lucide-react';
 import StatCard from './StatCard';
 
-export default function SummaryCards({ data }) {
+export default function SummaryCards({ data, isLoading }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
       <StatCard 
         icon={<BarChart3 size={18} />}
         title="Total Anggaran"
         value={data.totalAnggaran}
+        isLoading={isLoading}
       />
       
       <StatCard 
         icon={<Package size={18} />}
         title="Total Paket"
         value={data.totalPaket}
+        isLoading={isLoading}
       />
       
       <StatCard 
         icon={<FileText size={18} />}
         title="Tender"
         value={data.tender}
+        isLoading={isLoading}
       />
       
       <StatCard 
         icon={<AlertCircle size={18} />}
         title="Dikecualikan"
         value={data.dikecualikan}
+        isLoading={isLoading}
       />
     </div>
   );

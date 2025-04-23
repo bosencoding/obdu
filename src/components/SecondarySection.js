@@ -1,16 +1,7 @@
 import { Package, Users } from 'lucide-react';
 import StatCard from './StatCard';
-import FilterBar from './FilterBar';
 
-export default function SecondarySection({ 
-  data, 
-  searchQuery, 
-  setSearchQuery, 
-  filterYear, 
-  setFilterYear,
-  selectedRegion,
-  setSelectedRegion
-}) {
+export default function SecondarySection({ data }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
       {/* Secondary Cards */}
@@ -28,15 +19,8 @@ export default function SecondarySection({
         />
       </div>
       
-      {/* Filter Area with Region Dropdown */}
-      <FilterBar 
-        searchQuery={searchQuery} 
-        setSearchQuery={setSearchQuery}
-        filterYear={filterYear}
-        setFilterYear={setFilterYear}
-        selectedRegion={selectedRegion}
-        setSelectedRegion={setSelectedRegion}
-      />
+      {/* Empty div to maintain grid layout */}
+      <div></div>
     </div>
   );
 }
