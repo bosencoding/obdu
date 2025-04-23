@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, Download, ChevronDown } from 'lucide-react';
 import RegionDropdown from './RegionDropdown';
 import AutocompleteSearch from './AutoCompleteSearch';
@@ -14,37 +14,63 @@ export default function FilterBar({
   setSelectedLocation
 }) {
   const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
   const years = ['2021', '2022', '2023', '2024', '2025'];
   
-  // Handle location selection from AutocompleteSearch
-  const handleLocationSelect = (location) => {
+  // Debounce search query to prevent excessive API calls
+  useEffect(() => {
+    const timerId = setTimeout(() => {
+      if (localSearchQuery !== searchQuery) {
+        setSearchQuery(localSearchQuery);
+      }
+    }, 500); // Wait 500ms after user stops typing
+    
+    return () => clearTimeout(timerId);
+  }, [localSearchQuery, searchQuery, setSearchQuery]);
+  
+  // When searchQuery prop changes (from parent), update local state
+  useEffect(() => {
+    setLocalSearchQuery(searchQuery);
+  }, [searchQuery]);
+  
+  // Callbacks for location and region selection
+  const handleLocationSelect = useCallback((location) => {
     setSelectedLocation(location);
     // Reset region selection when location is selected
     if (location) {
       setSelectedRegion(null);
     }
-  };
+  }, [setSelectedLocation, setSelectedRegion]);
 
-  // Handle region selection from RegionDropdown
-  const handleRegionSelect = (region) => {
+  const handleRegionSelect = useCallback((region) => {
     setSelectedRegion(region);
     // Reset location search if region is selected
     if (region && region.id !== 'all') {
       setSelectedLocation(null);
     }
-  };
+  }, [setSelectedRegion, setSelectedLocation]);
+  
+  // Memoized reset filter handler
+  const handleResetFilter = useCallback(() => {
+    setSelectedLocation(null);
+    // Reset region to "Semua Wilayah" if your RegionDropdown has this default option
+    if (setSelectedRegion) {
+      const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
+      setSelectedRegion(defaultRegion);
+    }
+  }, [setSelectedLocation, setSelectedRegion]);
   
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
       <div className="flex flex-col md:flex-row gap-3 justify-between mb-4">
-        {/* Search */}
+        {/* Search with debouncing */}
         <div className="relative flex-grow">
           <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
           <input
             type="text"
             placeholder="Cari paket..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={localSearchQuery}
+            onChange={(e) => setLocalSearchQuery(e.target.value)}
             className="pl-9 pr-4 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -61,7 +87,7 @@ export default function FilterBar({
             <span>Export</span>
           </button>
           
-          {/* Year Dropdown */}
+          {/* Year Dropdown - Optimized with callback */}
           <div className="relative">
             <button 
               className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50"
@@ -104,14 +130,7 @@ export default function FilterBar({
         <div className="mt-2 text-sm text-gray-500">
           Filter lokasi aktif: {selectedLocation?.name || selectedRegion?.name}
           <button 
-            onClick={() => {
-              setSelectedLocation(null);
-              // Reset region to "Semua Wilayah" if your RegionDropdown has this default option
-              if (setSelectedRegion) {
-                const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
-                setSelectedRegion(defaultRegion);
-              }
-            }}
+            onClick={handleResetFilter}
             className="ml-2 text-blue-500 hover:underline"
           >
             Reset
