@@ -1,197 +1,95 @@
 "use client"
 
 import { useState, useEffect } from 'react';
+import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
-import { getFilteredPackages } from '@/app/apiService';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function TableSection({ 
+  // Props below for backward compatibility
   searchQuery, 
   filterYear,
   selectedRegion,
-  selectedLocation
+  selectedLocation,
+  // Use DataContext by default
+  useDataContext = true
 }) {
-  // Store all data fetched from API
+  // Get data from context
+  const { 
+    tableData: contextTableData,
+    totalItems: contextTotalItems, 
+    loading, 
+    filters,
+    updateFilters,
+    error
+  } = useData();
+  
+  // Local state for non-context mode (backward compatibility)
   const [allData, setAllData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
   
-  // Client-side pagination state
+  // Determine which data source to use
+  const tableData = useDataContext ? contextTableData : allData;
+  const loadingState = useDataContext ? (loading.dashboard || loading.table) : isLoading;
+  const tableError = useDataContext ? (error?.dashboard || error?.table) : errorMessage;
+  
+  // Client-side pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   
-  // Calculate pagination values
-  const totalItems = allData.length;
-  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  // Update page in context when page changes
+  useEffect(() => {
+    if (useDataContext && typeof updateFilters === 'function' && filters && currentPage !== filters.page) {
+      updateFilters({ page: currentPage });
+    }
+  }, [currentPage, filters, updateFilters, useDataContext]);
   
-  // Calculate current page data slice
+  // Sync local page with context page
+  useEffect(() => {
+    if (useDataContext && filters && filters.page && filters.page !== currentPage) {
+      setCurrentPage(filters.page);
+    }
+  }, [filters, currentPage, useDataContext]);
+  
+  // Calculate pagination values
+  const totalItems = useDataContext ? contextTotalItems : allData.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  
+  // Calculate current page data slice (for non-context mode)
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
-  const currentPageData = allData.slice(startIndex, endIndex);
+  const displayData = useDataContext 
+    ? tableData 
+    : allData.slice(startIndex, endIndex).map((item, index) => ({
+        no: startIndex + index + 1,
+        nama: item.paket || item.nama || '-',
+        satuan: item.satuan_kerja || item.satuan || '-',
+        krema: item.metode || item.krema || '-',
+        jadwal: item.pemilihan || item.jadwal || 'Belum ditentukan',
+        status: item.status || determineStatus(item),
+        keterangan: item.keterangan || item.jenis_pengadaan || '-',
+        wilayah: item.wilayah || item.lokasi || formatWilayah(item)
+      }));
   
-  // Format data for display in the table
-  const tableData = currentPageData.map((item, index) => ({
-    no: startIndex + index + 1,
-    nama: item.paket,
-    satuan: item.satuan_kerja,
-    krema: item.metode,
-    jadwal: item.pemilihan || 'Belum ditentukan',
-    status: determineStatus(item),
-    keterangan: item.jenis_pengadaan || 'dil.',
-    wilayah: item.lokasi || item.provinsi || '-'
-  }));
-  
-  // Initial load - get Jakarta Selatan data
-  useEffect(() => {
-    async function fetchInitialData() {
-      // Only run on initial load if no filters are set
-      if (!searchQuery && !selectedRegion && !selectedLocation) {
-        setIsLoading(true);
-        
-        try {
-          // Default filters for Jakarta Selatan
-          const defaultFilters = {
-            provinsi: 'DKI Jakarta',
-            daerahTingkat: 'Kota',
-            kotaKab: 'Jakarta Selatan',
-            limit: 1000
-          };
-          
-          if (filterYear) {
-            defaultFilters.year = parseInt(filterYear);
-          }
-          
-          // Fetch data using the API service
-          const data = await getFilteredPackages(defaultFilters);
-          
-          // Store all fetched data
-          setAllData(data);
-        } catch (err) {
-          console.error('Error fetching initial data:', err);
-          setError(err.message);
-          // Use fallback data if API fails
-          setAllData(getJakartaSelatanFallbackData());
-        } finally {
-          setIsLoading(false);
-        }
-      }
+  // Format wilayah from item data (for non-context mode)
+  function formatWilayah(item) {
+    if (item.lokasi) return item.lokasi;
+    
+    if (item.provinsi) {
+      let result = '';
+      if (item.daerah_tingkat) result += `${item.daerah_tingkat} `;
+      if (item.kota_kab) result += item.kota_kab;
+      if (result) result += `, ${item.provinsi}`;
+      else result = item.provinsi;
+      return result;
     }
     
-    fetchInitialData();
-  }, []); // Only run once on component mount
+    return '-';
+  }
   
-  // Fetch data based on user-selected filters
-  useEffect(() => {
-    async function fetchAllData() {
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        // Prepare filter parameters for API call
-        // Note: We're not using skip/limit anymore since we want ALL data
-        const filters = {};
-        
-        // Add search query if provided
-        if (searchQuery) {
-          filters.search = searchQuery;
-        }
-        
-        // Add filter year if provided
-        if (filterYear) {
-          filters.year = parseInt(filterYear);
-        }
-        
-        // Add region filter if selected from dropdown
-        if (selectedRegion && selectedRegion.id !== 'all') {
-          filters.regionId = selectedRegion.id;
-          
-          if (selectedRegion.id.startsWith('province-')) {
-            filters.provinsi = selectedRegion.name;
-          } else if (selectedRegion.id.startsWith('region-')) {
-            filters.provinsi = selectedRegion.provinsi;
-            filters.daerahTingkat = selectedRegion.type;
-            // Extract kota_kab from the name by removing the type
-            const kotaKab = selectedRegion.name.replace(selectedRegion.type, '').trim();
-            filters.kotaKab = kotaKab;
-          }
-        }
-        
-        // Add location filter if selected from autocomplete
-        if (selectedLocation) {
-          filters.regionId = selectedLocation.id;
-          filters.provinsi = selectedLocation.provinsi;
-          if (selectedLocation.type) {
-            filters.daerahTingkat = selectedLocation.type;
-            // Extract kota_kab from the name by removing the type
-            const kotaKab = selectedLocation.name.replace(selectedLocation.type, '').trim();
-            filters.kotaKab = kotaKab;
-          }
-        }
-        
-        // If no specific region/location is selected and we have data, keep using initial Jakarta Selatan data
-        if (!searchQuery && !selectedRegion && !selectedLocation && allData.length > 0) {
-          return; // Keep existing data
-        }
-        
-        // Set a higher limit to fetch more data at once (adjust as needed)
-        filters.limit = 1000; 
-        
-        // Fetch data using the API service
-        const data = await getFilteredPackages(filters);
-        
-        // Store all fetched data
-        setAllData(data);
-        
-        // Reset to first page when filters change
-        setCurrentPage(1);
-      } catch (err) {
-        console.error('Error fetching data:', err);
-        setError(err.message);
-        
-        if (searchQuery || selectedRegion || selectedLocation) {
-          // Use sample data as fallback for user-selected filters
-          setAllData([
-            { 
-              paket: 'Pengadaan NIA', 
-              satuan_kerja: 'Dinas KOM', 
-              metode: 'E-Purchasing',
-              pemilihan: 'April 2025',
-              jenis_pengadaan: 'Barang'
-            },
-            { 
-              paket: 'Kampanye Kesehatan', 
-              satuan_kerja: 'Dinas Pnchrlnn', 
-              metode: 'E-Purchasing',
-              pemilihan: 'Mei 2025',
-              jenis_pengadaan: 'Jasa'
-            },
-            { 
-              paket: 'WhatsApp Bisnis', 
-              satuan_kerja: 'Tender', 
-              metode: 'Tender',
-              pemilihan: 'Juni 2025',
-              jenis_pengadaan: 'Konsultansi'
-            }
-          ]);
-        } else {
-          // Use Jakarta Selatan fallback data for initial view
-          setAllData(getJakartaSelatanFallbackData());
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    
-    // Only fetch new data if we have user-initiated filter changes
-    if (searchQuery || selectedRegion || selectedLocation || (filterYear && allData.length === 0)) {
-      fetchAllData();
-    }
-  }, [searchQuery, filterYear, selectedRegion, selectedLocation, allData.length]);
-  
-  // Helper function to determine status
+  // Determine status based on item data (for non-context mode)
   function determineStatus(item) {
-    // Logic to determine status based on the data
-    // This is a placeholder - adjust according to your actual data structure
     const currentDate = new Date();
     const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
     
@@ -201,108 +99,6 @@ export default function TableSection({
     if (item.is_pdn === false) return 'Dibth Flnxnnm';
     return 'Sesuai';
   }
-  
-  // Function to get Jakarta Selatan fallback data
-  function getJakartaSelatanFallbackData() {
-    return [
-      { 
-        paket: 'Pengadaan WhatsApp Business API untuk UMKM Jakarta Selatan', 
-        satuan_kerja: 'Dinas KUMKM Jakarta Selatan', 
-        metode: 'E-Purchasing',
-        pemilihan: 'Mei 2025',
-        jenis_pengadaan: 'Jasa',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Workshop Pelatihan Penggunaan WhatsApp Business', 
-        satuan_kerja: 'Bidang Ekonomi Digital', 
-        metode: 'Tender',
-        pemilihan: 'Juni 2025',
-        jenis_pengadaan: 'Jasa Konsultansi',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Pembuatan Konten Digital WhatsApp Marketing', 
-        satuan_kerja: 'Dinas Kominfo Jakarta Selatan', 
-        metode: 'Pengadaan Langsung',
-        pemilihan: 'April 2025',
-        jenis_pengadaan: 'Jasa Lainnya',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Pengembangan Chatbot WhatsApp untuk Layanan Publik', 
-        satuan_kerja: 'Dinas Kominfo Jakarta Selatan', 
-        metode: 'Tender',
-        pemilihan: 'Juli 2025',
-        jenis_pengadaan: 'Jasa',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Sistem Notifikasi WhatsApp untuk Pelayanan Kesehatan', 
-        satuan_kerja: 'Dinas Kesehatan Jakarta Selatan', 
-        metode: 'E-Purchasing',
-        pemilihan: 'Mei 2025',
-        jenis_pengadaan: 'Jasa',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Implementasi WhatsApp API untuk Pusat Pelayanan Terpadu', 
-        satuan_kerja: 'Kantor Walikota Jakarta Selatan', 
-        metode: 'Seleksi Langsung',
-        pemilihan: 'Juni 2025',
-        jenis_pengadaan: 'Jasa Konsultansi',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Sewa Perangkat untuk Pengelolaan WhatsApp Business',
-        satuan_kerja: 'Dinas KUMKM Jakarta Selatan', 
-        metode: 'E-Purchasing',
-        pemilihan: 'April 2025',
-        jenis_pengadaan: 'Barang',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Integrasi WhatsApp ke Sistem Informasi Kecamatan',
-        satuan_kerja: 'Kecamatan Pancoran', 
-        metode: 'Pengadaan Langsung',
-        pemilihan: 'Mei 2025',
-        jenis_pengadaan: 'Jasa',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Perawatan Sistem WhatsApp Business Tahunan', 
-        satuan_kerja: 'Dinas Kominfo Jakarta Selatan', 
-        metode: 'Pengadaan Langsung',
-        pemilihan: 'Juni 2025',
-        jenis_pengadaan: 'Jasa',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Pengadaan Server untuk WhatsApp Business API', 
-        satuan_kerja: 'Dinas Kominfo Jakarta Selatan', 
-        metode: 'Tender',
-        pemilihan: 'Juli 2025',
-        jenis_pengadaan: 'Barang',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Pelatihan Admin WhatsApp Business', 
-        satuan_kerja: 'Dinas KUMKM Jakarta Selatan', 
-        metode: 'Pengadaan Langsung',
-        pemilihan: 'Mei 2025',
-        jenis_pengadaan: 'Jasa Konsultansi',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        paket: 'Pembuatan Materi Pelatihan WhatsApp Marketing', 
-        satuan_kerja: 'Bidang Ekonomi Digital', 
-        metode: 'Pengadaan Langsung',
-        pemilihan: 'April 2025',
-        jenis_pengadaan: 'Jasa Lainnya',
-        lokasi: 'Kota Jakarta Selatan, DKI Jakarta'
-      }
-    ];
-  }
 
   // Handle pagination
   const goToPage = (page) => {
@@ -311,10 +107,55 @@ export default function TableSection({
     }
   };
   
-  // Determine the page title based on filters
-  const pageTitle = selectedLocation?.name || 
-    (selectedRegion?.id !== 'all' ? selectedRegion?.name : 
-    (!searchQuery && !selectedRegion && !selectedLocation ? 'Kota Jakarta Selatan' : 'Sesuai'));
+  // Determine the page title based on context filters or props
+  const pageTitle = useDataContext
+    ? getPageTitle(filters)
+    : (selectedLocation?.name || 
+      (selectedRegion?.id !== 'all' ? selectedRegion?.name : 
+      (!searchQuery && !selectedRegion && !selectedLocation ? 'Kota Jakarta Selatan' : 'Semua')));
+  
+  // Helper function to get page title from filters
+  function getPageTitle(filters) {
+    // Safety check - if filters is undefined, return default
+    if (!filters) {
+      return 'Daftar Paket';
+    }
+    
+    if (filters.kotaKab && filters.daerahTingkat) {
+      return `${filters.daerahTingkat} ${filters.kotaKab}`;
+    }
+    
+    if (filters.provinsi && !filters.kotaKab) {
+      return filters.provinsi;
+    }
+    
+    if (filters.searchQuery) {
+      return `Pencarian: ${filters.searchQuery}`;
+    }
+    
+    // Default
+    return 'Daftar Paket';
+  }
+  
+  // Empty state for when there's no data
+  const EmptyState = () => (
+    <div className="py-8 text-center">
+      <p className="text-gray-500">Tidak ada data yang ditemukan.</p>
+      {filters?.searchQuery && (
+        <p className="mt-2 text-sm text-gray-500">
+          Coba ubah filter pencarian atau wilayah untuk melihat hasil berbeda.
+        </p>
+      )}
+    </div>
+  );
+  
+  // Error state
+  const ErrorState = ({ message }) => (
+    <div className="py-8 text-center">
+      <p className="text-red-500">Terjadi kesalahan saat memuat data.</p>
+      {message && <p className="mt-2 text-sm text-gray-500">{message}</p>}
+    </div>
+  );
   
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
@@ -322,19 +163,18 @@ export default function TableSection({
         Paket Pekerjaan {pageTitle}
       </h2>
       
-      {isLoading ? (
+      {loadingState ? (
         <div className="text-center py-8">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           <p className="mt-2 text-gray-500">Memuat data...</p>
         </div>
-      ) : error ? (
-        <div className="text-center py-8 text-red-500">
-          <p>Terjadi kesalahan: {error}</p>
-          <p className="mt-2 text-sm">Menampilkan data contoh.</p>
-        </div>
+      ) : tableError ? (
+        <ErrorState message={tableError} />
+      ) : tableData.length === 0 ? (
+        <EmptyState />
       ) : (
         <>
-          <PaketTable data={tableData} />
+          <PaketTable data={displayData} />
           
           {/* Pagination controls */}
           <div className="flex items-center justify-between mt-4 border-t pt-4">
@@ -346,6 +186,7 @@ export default function TableSection({
                 onClick={() => goToPage(currentPage - 1)}
                 disabled={currentPage === 1}
                 className={`p-2 rounded-md ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                aria-label="Previous page"
               >
                 <ChevronLeft size={16} />
               </button>
@@ -369,6 +210,8 @@ export default function TableSection({
                     key={i}
                     onClick={() => goToPage(pageNum)}
                     className={`px-3 py-1 rounded-md ${currentPage === pageNum ? 'bg-blue-100 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+                    aria-label={`Page ${pageNum}`}
+                    aria-current={currentPage === pageNum ? 'page' : undefined}
                   >
                     {pageNum}
                   </button>
@@ -379,6 +222,7 @@ export default function TableSection({
                 onClick={() => goToPage(currentPage + 1)}
                 disabled={currentPage === totalPages || totalPages === 0}
                 className={`p-2 rounded-md ${currentPage === totalPages || totalPages === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                aria-label="Next page"
               >
                 <ChevronRight size={16} />
               </button>

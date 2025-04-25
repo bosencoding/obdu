@@ -1,40 +1,98 @@
-// apiService.js
-// This file contains all API-related functions for the application
+// apiService.js - Fixed Version
+// Central API service for dashboard data
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '/api/api';
+
+// Request timeout in milliseconds
+const REQUEST_TIMEOUT = 15000;
 
 /**
- * Base API request handler with error handling
+ * Enhanced API request with error handling and timeout
  * @param {string} url - The API endpoint URL
  * @param {Object} options - Fetch options
  * @returns {Promise<any>} - The parsed response data
  */
 async function apiRequest(url, options = {}) {
+  const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+  
   try {
-    const fullUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
-    console.log(`Making API request to: ${fullUrl}`);
+    // Create an abort controller for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     
-    const response = await fetch(fullUrl, {
+    // Add the signal to options
+    const enhancedOptions = {
       ...options,
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
       },
-    });
-
+    };
+    
+    console.log(`Request: ${options.method || 'GET'} ${fullUrl}`);
+    
+    const response = await fetch(fullUrl, enhancedOptions);
+    
+    // Clear the timeout
+    clearTimeout(timeoutId);
+    
+    // Handle non-OK responses
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({
-        message: `HTTP error! Status: ${response.status}`,
-      }));
+      // Try to get error details from response
+      let errorDetails = '';
+      try {
+        const errorData = await response.json();
+        errorDetails = errorData.message || errorData.error || JSON.stringify(errorData);
+      } catch {
+        errorDetails = await response.text();
+      }
       
-      throw new Error(errorData.message || `HTTP error! Status: ${response.status}`);
+      throw new Error(`API request failed: ${response.status} ${response.statusText}. ${errorDetails}`);
     }
 
+    // Parse JSON response
     return await response.json();
   } catch (error) {
-    console.error(`API request failed: ${error.message}`);
+    // Handle specific error types
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${REQUEST_TIMEOUT}ms: ${fullUrl}`);
+    }
+    
+    // Log detailed error and rethrow
+    console.error(`API request error:`, error);
     throw error;
   }
+}
+
+/**
+ * Build query parameters from a filters object
+ * @param {Object} filters - Filter criteria
+ * @returns {URLSearchParams} - URL search parameters
+ */
+function buildQueryParams(filters = {}) {
+  const params = new URLSearchParams();
+  
+  // Only add parameters that are defined
+  if (filters.searchQuery) params.append('search', filters.searchQuery);
+  if (filters.year) params.append('year', filters.year);
+  if (filters.regionId) params.append('region_id', filters.regionId);
+  if (filters.provinsi) params.append('provinsi', filters.provinsi);
+  if (filters.daerahTingkat) params.append('daerah_tingkat', filters.daerahTingkat);
+  if (filters.kotaKab) params.append('kota_kab', filters.kotaKab);
+  if (filters.minPagu !== undefined && filters.minPagu !== null) params.append('min_pagu', filters.minPagu);
+  if (filters.maxPagu !== undefined && filters.maxPagu !== null) params.append('max_pagu', filters.maxPagu);
+  if (filters.metode) params.append('metode', filters.metode);
+  if (filters.jenisPengadaan) params.append('jenis_pengadaan', filters.jenisPengadaan);
+  
+  // Pagination parameters
+  if (filters.skip !== undefined) params.append('skip', filters.skip);
+  if (filters.limit !== undefined) params.append('limit', filters.limit);
+  if (filters.page !== undefined && filters.limit !== undefined) {
+    params.append('skip', (filters.page - 1) * filters.limit);
+  }
+  
+  return params;
 }
 
 /**
@@ -42,8 +100,7 @@ async function apiRequest(url, options = {}) {
  * @returns {Promise<Array>} - List of regions with counts
  */
 export async function getRegionsList() {
-  // Make sure the endpoint path matches what's defined in your FastAPI app
-  return apiRequest('/api/regions');
+  return apiRequest('/regions');
 }
 
 /**
@@ -53,122 +110,26 @@ export async function getRegionsList() {
  * @returns {Promise<Array>} - List of matching locations
  */
 export async function searchLocations(query, limit = 10) {
+  if (!query || query.length < 2) {
+    return [];
+  }
+  
   const params = new URLSearchParams({
     q: query,
     limit,
   });
   
-  return apiRequest(`/api/locations/search?${params.toString()}`);
+  return apiRequest(`/locations/search?${params.toString()}`);
 }
 
-/**
- * Get data for the table based on filters
- * @param {Object} filters - Filter criteria
- * @returns {Promise<Array>} - Filtered data for the table
- */
-export async function getFilteredPackages(filters = {}) {
-    const {
-      search,
-      year,
-      regionId,
-      provinsi,
-      daerahTingkat,
-      kotaKab,
-      minPagu,
-      maxPagu,
-      metode,
-      jenisPengadaan,
-      skip = 0,
-      limit = 10, // Default to 10 items per page
-    } = filters;
-    
-    const params = new URLSearchParams();
-    
-    if (search) params.append('search', search);
-    if (year) params.append('year', year);
-    if (regionId) params.append('region_id', regionId);
-    if (provinsi) params.append('provinsi', provinsi);
-    if (daerahTingkat) params.append('daerah_tingkat', daerahTingkat);
-    if (kotaKab) params.append('kota_kab', kotaKab);
-    if (minPagu !== undefined) params.append('min_pagu', minPagu);
-    if (maxPagu !== undefined) params.append('max_pagu', maxPagu);
-    if (metode) params.append('metode', metode);
-    if (jenisPengadaan) params.append('jenis_pengadaan', jenisPengadaan);
-    
-    // Always include pagination parameters to ensure consistent API calls
-    params.append('skip', skip);
-    params.append('limit', limit);
-    
-    try {
-      // Attempt to get data from API
-      return await apiRequest(`/api/paket/filter?${params.toString()}`);
-    } catch (error) {
-      console.error("Error fetching filtered packages:", error);
-      
-      // If API fails, return mock data based on page
-      const pageNumber = Math.floor(skip / limit) + 1;
-      const mockDataSize = Math.min(limit, 10); // Generate up to 10 mock items
-      
-      // Generate mock data with different values for different pages
-      const mockData = Array.from({ length: mockDataSize }, (_, index) => {
-        const itemNumber = skip + index + 1;
-        return {
-          id: itemNumber,
-          paket: `Paket ${itemNumber}: ${search || 'Whatsapp'} ${pageNumber}`,
-          pagu: 1000000 * itemNumber,
-          satuan_kerja: `Dinas Kominfo Page ${pageNumber}`,
-          is_pdn: itemNumber % 2 === 0,
-          is_umk: itemNumber % 3 === 0,
-          metode: itemNumber % 4 === 0 ? 'Tender' : 'E-Purchasing',
-          jenis_pengadaan: itemNumber % 3 === 0 ? 'Barang' : 'Jasa',
-          pemilihan: `April ${year || '2025'}`,
-          pemilihan_datetime: new Date(),
-          lokasi: `Kota Sample ${pageNumber}, Provinsi Demo`,
-          provinsi: 'Provinsi Demo',
-          daerah_tingkat: 'Kota',
-          kota_kab: `Sample ${pageNumber}`
-        };
-      });
-      
-      return mockData;
-    }
-  }
 /**
  * Get dashboard statistics
  * @param {Object} filters - Filter criteria for the statistics
  * @returns {Promise<Object>} - Dashboard statistics data
  */
 export async function getDashboardStats(filters = {}) {
-  const {
-    year,
-    regionId,
-    provinsi,
-    daerahTingkat,
-    kotaKab,
-  } = filters;
-  
-  const params = new URLSearchParams();
-  
-  if (year) params.append('year', year);
-  if (regionId) params.append('region_id', regionId);
-  if (provinsi) params.append('provinsi', provinsi);
-  if (daerahTingkat) params.append('daerah_tingkat', daerahTingkat);
-  if (kotaKab) params.append('kota_kab', kotaKab);
-  
-  try {
-    return await apiRequest(`/api/dashboard/stats?${params.toString()}`);
-  } catch (error) {
-    console.error("Error fetching dashboard stats:", error);
-    // Return default data if API call fails
-    return {
-      totalAnggaran: 'Rp 5,240,000,000',
-      totalPaket: 42,
-      tender: 15,
-      dikecualikan: 7,
-      epkem: 12,
-      pengadaanLangsung: 8
-    };
-  }
+  const params = buildQueryParams(filters);
+  return apiRequest(`/dashboard/stats?${params.toString()}`);
 }
 
 /**
@@ -178,47 +139,18 @@ export async function getDashboardStats(filters = {}) {
  * @returns {Promise<Array>} - Data for the specified chart
  */
 export async function getChartData(chartType, filters = {}) {
-  const {
-    year,
-    regionId,
-    provinsi,
-    daerahTingkat,
-    kotaKab,
-  } = filters;
-  
-  const params = new URLSearchParams();
-  
-  if (year) params.append('year', year);
-  if (regionId) params.append('region_id', regionId);
-  if (provinsi) params.append('provinsi', provinsi);
-  if (daerahTingkat) params.append('daerah_tingkat', daerahTingkat);
-  if (kotaKab) params.append('kota_kab', kotaKab);
-  
-  try {
-    return await apiRequest(`/api/dashboard/chart/${chartType}?${params.toString()}`);
-  } catch (error) {
-    console.error(`Error fetching ${chartType} chart data:`, error);
-    // Return default data based on chart type
-    if (chartType === 'pie') {
-      return [
-        { name: 'Event Budaya', value: 46.1 },
-        { name: 'Kesehatan', value: 28.4 },
-        { name: 'WhatsApp Bisnis', value: 15.2 },
-        { name: 'Event Seni', value: 10.3 }
-      ];
-    } else if (chartType === 'bar') {
-      return [
-        { name: 'Event Budaya', value: 30 },
-        { name: 'Kampanye Kesehatan', value: 24 },
-        { name: 'WhatsApp Bisnis', value: 18 },
-        { name: 'Event Seni Bisnis', value: 15 },
-        { name: 'Event Budaya 2', value: 12 },
-        { name: 'WhatsApp Bisnis 2', value: 8 },
-        { name: 'Lainnya', value: 5 }
-      ];
-    }
-    return [];
-  }
+  const params = buildQueryParams(filters);
+  return apiRequest(`/dashboard/chart/${chartType}?${params.toString()}`);
+}
+
+/**
+ * Get data for the table based on filters
+ * @param {Object} filters - Filter criteria
+ * @returns {Promise<Array>} - Filtered data for the table
+ */
+export async function getFilteredPackages(filters = {}) {
+  const params = buildQueryParams(filters);
+  return apiRequest(`/paket/filter?${params.toString()}`);
 }
 
 /**
@@ -226,10 +158,24 @@ export async function getChartData(chartType, filters = {}) {
  * @returns {Promise<Array>} - List of wilayah with counts
  */
 export async function getWilayahList() {
-  return apiRequest('/api/wilayah/');
+  return apiRequest('/wilayah/');
 }
 
-// Export all functions
+/**
+ * Handle unexpected API errors
+ * @param {Error} error - The error that occurred
+ * @param {string} source - The source of the error (for logging)
+ * @throws {Error} - Always throws the error after logging
+ */
+export function handleApiError(error, source) {
+  // Log detailed error information
+  console.error(`API Error in ${source}:`, error);
+  
+  // No dummy data, just rethrow the error for proper handling
+  throw error;
+}
+
+// Export all functions as default object
 export default {
   getRegionsList,
   searchLocations,
@@ -237,4 +183,5 @@ export default {
   getDashboardStats,
   getChartData,
   getWilayahList,
+  handleApiError
 };

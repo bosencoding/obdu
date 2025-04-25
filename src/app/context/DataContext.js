@@ -1,349 +1,213 @@
-// src/app/context/DataContext.js
+// src/app/context/DataContext.js - Anti-Loop Version
 'use client';
 
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { getDashboardStats, getChartData, getFilteredPackages } from '@/app/apiService';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { getDashboardStats, getChartData, getFilteredPackages, getRegionsList } from '@/app/apiService';
 
 // Create context
-const DataContext = createContext();
+const DataContext = createContext(null);
 
 // Custom hook to use the data context
 export function useData() {
   const context = useContext(DataContext);
   if (!context) {
-    throw new Error('useData must be used within a DataProvider');
+    console.error('useData must be used within a DataProvider');
+    // Return empty data instead of dummy data
+    return {
+      dashboardStats: {},
+      chartData: { pie: [], bar: [] },
+      tableData: [],
+      totalItems: 0,
+      regions: [],
+      filters: {},
+      loading: { 
+        dashboard: false, 
+        initial: true,
+        regions: false,
+        stats: false,
+        charts: false,
+        table: false
+      },
+      // Provide no-op functions
+      updateFilters: () => {},
+      fetchAllDashboardData: () => Promise.resolve()
+    };
   }
   return context;
 }
 
 // Provider component
 export function DataProvider({ children }) {
-  // Shared state
-  const [dashboardStats, setDashboardStats] = useState({
-    totalAnggaran: 'Rp 0',
-    totalPaket: 0,
-    tender: 0,
-    dikecualikan: 0,
-    epkem: 0,
-    pengadaanLangsung: 0
+  // Refs to prevent loops
+  const isMountedRef = useRef(false);
+  const lastFetchTimeRef = useRef(0);
+  const pendingFetchRef = useRef(null);
+  const dataFetchedRef = useRef(false);
+  
+  // Debug logger
+  const logDebug = useCallback((message, data) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DataContext] ${message}`, data);
+    }
+  }, []);
+  
+  // Shared state for all dashboard data
+  const [dashboardData, setDashboardData] = useState({
+    stats: {
+      totalAnggaran: '',
+      totalPaket: 0,
+      tender: 0,
+      dikecualikan: 0,
+      epkem: 0,
+      pengadaanLangsung: 0
+    },
+    charts: {
+      pie: [],
+      bar: []
+    },
+    table: {
+      data: [],
+      totalItems: 0
+    },
+    regions: [],
   });
   
-  const [chartData, setChartData] = useState({
-    pie: [],
-    bar: []
-  });
-  
-  const [tableData, setTableData] = useState([]);
-  const [totalItems, setTotalItems] = useState(0);
-  
-  const [loadingState, setLoadingState] = useState({
-    stats: false,
-    charts: false,
-    table: false
+  // Global filters state
+  const [filters, setFilters] = useState({
+    searchQuery: '',
+    year: '2025',
+    regionId: null,
+    provinsi: 'DKI Jakarta',    // Default Jakarta
+    daerahTingkat: 'Kota',      // Default Kota
+    kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
+    minPagu: null,
+    maxPagu: null,
+    metode: null,
+    jenisPengadaan: null,
+    page: 1,
+    limit: 10
   });
 
-  // Load default Jakarta Selatan data on initial render
+  // Loading state
+  const [loadingState, setLoadingState] = useState({
+    initial: true,   // Initial loading state
+    dashboard: false, // All dashboard data
+    regions: false,   // Region list
+    stats: false,     // Dashboard stats
+    charts: false,    // Chart data
+    table: false      // Table data
+  });
+
+  // Error state
+  const [error, setError] = useState({
+    dashboard: null,
+    regions: null
+  });
+
+  // Load regions on initial render - only once
   useEffect(() => {
-    // Load Jakarta Selatan data by default
-    const loadDefaultData = async () => {
-      setLoadingState({ stats: true, charts: true, table: true });
+    // Only run once
+    if (isMountedRef.current) return;
+    isMountedRef.current = true;
+    
+    logDebug('Loading regions (first mount)');
+    
+    const loadRegions = async () => {
+      setLoadingState(prev => ({ ...prev, regions: true }));
       
       try {
-        // Default Jakarta Selatan filters
-        const defaultFilters = {
-          provinsi: 'DKI Jakarta',
-          daerahTingkat: 'Kota',
-          kotaKab: 'Jakarta Selatan'
-        };
+        // Use the API service function
+        const data = await getRegionsList();
         
-        // Fetch all data for Jakarta Selatan
-        await Promise.all([
-          fetchDashboardStats(defaultFilters),
-          fetchChartData(defaultFilters),
-          fetchTableData(1, 10, defaultFilters)
-        ]);
+        // Add "all" option
+        const allOption = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
+        
+        setDashboardData(prev => ({
+          ...prev,
+          regions: [allOption, ...data]
+        }));
+        
+        setError(prev => ({ ...prev, regions: null }));
       } catch (error) {
-        console.error('Error loading default Jakarta Selatan data:', error);
-        // Use fallback data if API fails
+        console.error('Error loading regions:', error);
+        setError(prev => ({ ...prev, regions: error.message }));
+        
+        // Set empty regions instead of dummy data
+        setDashboardData(prev => ({
+          ...prev,
+          regions: [{ id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 }]
+        }));
       } finally {
-        setLoadingState({ stats: false, charts: false, table: false });
+        setLoadingState(prev => ({ ...prev, regions: false }));
       }
     };
     
-    loadDefaultData();
-  }, []);
-  
-  // Fetch dashboard stats
-  const fetchDashboardStats = useCallback(async (filters = {}) => {
-    setLoadingState(prev => ({ ...prev, stats: true }));
+    loadRegions();
+  }, [logDebug]); // Empty dependency array so it only runs once
+
+  // Helper function to fetch dashboard stats
+  const fetchDashboardStats = useCallback(async (currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    
     try {
-      const stats = await getDashboardStats(filters);
-      setDashboardStats(stats);
-      return stats;
-    } catch (error) {
-      console.error('Error fetching dashboard stats:', error);
-      // Return default Jakarta Selatan stats on error
-      const jakselStats = {
-        totalAnggaran: 'Rp 15,780,000,000',
-        totalPaket: 128,
-        tender: 42,
-        dikecualikan: 17,
-        epkem: 38,
-        pengadaanLangsung: 31
-      };
-      setDashboardStats(jakselStats);
-      return jakselStats;
-    } finally {
-      setLoadingState(prev => ({ ...prev, stats: false }));
-    }
-  }, []);
-  
-  // Fetch chart data
-  const fetchChartData = useCallback(async (filters = {}) => {
-    setLoadingState(prev => ({ ...prev, charts: true }));
-    try {
-      const [pieData, barData] = await Promise.all([
-        getChartData('pie', filters),
-        getChartData('bar', filters)
-      ]);
+      const stats = await getDashboardStats(filtersToUse);
       
-      const newChartData = { pie: pieData, bar: barData };
-      setChartData(newChartData);
-      return newChartData;
-    } catch (error) {
-      console.error('Error fetching chart data:', error);
-      // Jakarta Selatan fallback chart data
-      const jakselChartData = {
-        pie: [
-          { name: 'Jasa Lainnya', value: 42.5 },
-          { name: 'Barang', value: 28.7 },
-          { name: 'Jasa Konsultansi', value: 16.8 },
-          { name: 'Pekerjaan Konstruksi', value: 12.0 }
-        ],
-        bar: [
-          { name: 'Pengadaan WhatsApp Business API', value: 2450000000 },
-          { name: 'Sistem Notifikasi WhatsApp', value: 1850000000 },
-          { name: 'Integrasi WhatsApp ke Sistem', value: 1650000000 },
-          { name: 'Workshop Pelatihan WhatsApp', value: 1250000000 },
-          { name: 'Pengembangan Chatbot WhatsApp', value: 950000000 },
-          { name: 'Pembuatan Konten Marketing', value: 750000000 }
-        ]
-      };
-      setChartData(jakselChartData);
-      return jakselChartData;
-    } finally {
-      setLoadingState(prev => ({ ...prev, charts: false }));
-    }
-  }, []);
-  
-  // Fetch table data with pagination
-  const fetchTableData = useCallback(async (page = 1, pageSize = 10, filters = {}) => {
-    setLoadingState(prev => ({ ...prev, table: true }));
-    try {
-      const apiFilters = {
-        ...filters,
-        skip: (page - 1) * pageSize,
-        limit: pageSize
-      };
-      
-      const data = await getFilteredPackages(apiFilters);
-      
-      // Transform data for the table component
-      const formattedData = data.map((item, index) => ({
-        no: (page - 1) * pageSize + index + 1,
-        nama: item.paket,
-        satuan: item.satuan_kerja,
-        krema: item.metode,
-        jadwal: item.pemilihan || 'Belum ditentukan',
-        wilayah: item.lokasi || item.provinsi ? `${item.daerah_tingkat || 'Kota'} ${item.kota_kab || ''}, ${item.provinsi || ''}`.trim() : '-',
-        status: determineStatus(item),
-        keterangan: item.jenis_pengadaan || '-'
+      // Update state with fetched data
+      setDashboardData(prev => ({
+        ...prev,
+        stats
       }));
       
-      setTableData(formattedData);
-      
-      // Set total items
-      if (data.length === pageSize) {
-        setTotalItems(Math.max(totalItems, page * pageSize + 1));
-      } else if (data.length < pageSize && page === 1) {
-        setTotalItems(data.length);
-      }
-      
-      return { data: formattedData, total: totalItems };
+      return stats;
     } catch (error) {
-      console.error('Error fetching table data:', error);
-      
-      // Jakarta Selatan fallback data
-      const jakselFallbackData = generateJakselFallbackData(page, pageSize);
-      setTableData(jakselFallbackData);
-      setTotalItems(jakselFallbackData.length > 0 ? 128 : 0); // Simulate total count
-      
-      return { data: jakselFallbackData, total: 128 };
-    } finally {
-      setLoadingState(prev => ({ ...prev, table: false }));
+      console.error('Error fetching stats:', error);
+      // Don't change the current stats on error
+      return dashboardData.stats;
     }
-  }, [totalItems]);
-  
-  // Generate Jakarta Selatan fallback data
-  function generateJakselFallbackData(page = 1, pageSize = 10) {
-    const baseData = [
-      { 
-        no: 1,
-        nama: 'Pengadaan WhatsApp Business API untuk UMKM Jakarta Selatan', 
-        satuan: 'Dinas KUMKM Jakarta Selatan', 
-        krema: 'E-Purchasing',
-        jadwal: 'Mei 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 2,
-        nama: 'Workshop Pelatihan Penggunaan WhatsApp Business', 
-        satuan: 'Bidang Ekonomi Digital', 
-        krema: 'Tender',
-        jadwal: 'Juni 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa Konsultansi',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 3,
-        nama: 'Pembuatan Konten Digital WhatsApp Marketing', 
-        satuan: 'Dinas Kominfo Jakarta Selatan', 
-        krema: 'Pengadaan Langsung',
-        jadwal: 'April 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa Lainnya',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 4,
-        nama: 'Pengembangan Chatbot WhatsApp untuk Layanan Publik', 
-        satuan: 'Dinas Kominfo Jakarta Selatan', 
-        krema: 'Tender',
-        jadwal: 'Juli 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 5,
-        nama: 'Sistem Notifikasi WhatsApp untuk Pelayanan Kesehatan', 
-        satuan: 'Dinas Kesehatan Jakarta Selatan', 
-        krema: 'E-Purchasing',
-        jadwal: 'Mei 2025',
-        status: 'Dibth Flnxnnm',
-        keterangan: 'Jasa',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 6,
-        nama: 'Implementasi WhatsApp API untuk Pusat Pelayanan Terpadu', 
-        satuan: 'Kantor Walikota Jakarta Selatan', 
-        krema: 'Seleksi Langsung',
-        jadwal: 'Juni 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa Konsultansi',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 7,
-        nama: 'Sewa Perangkat untuk Pengelolaan WhatsApp Business',
-        satuan: 'Dinas KUMKM Jakarta Selatan', 
-        krema: 'E-Purchasing',
-        jadwal: 'April 2025',
-        status: 'Hrge Esak Btorch',
-        keterangan: 'Barang',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 8,
-        nama: 'Integrasi WhatsApp ke Sistem Informasi Kecamatan',
-        satuan: 'Kecamatan Pancoran', 
-        krema: 'Pengadaan Langsung',
-        jadwal: 'Mei 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 9,
-        nama: 'Perawatan Sistem WhatsApp Business Tahunan', 
-        satuan: 'Dinas Kominfo Jakarta Selatan', 
-        krema: 'Pengadaan Langsung',
-        jadwal: 'Juni 2025',
-        status: 'Sesuai',
-        keterangan: 'Jasa',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      },
-      { 
-        no: 10,
-        nama: 'Pengadaan Server untuk WhatsApp Business API', 
-        satuan: 'Dinas Kominfo Jakarta Selatan', 
-        krema: 'Tender',
-        jadwal: 'Juli 2025',
-        status: 'Sesuai',
-        keterangan: 'Barang',
-        wilayah: 'Kota Jakarta Selatan, DKI Jakarta'
-      }
-    ];
-    
-    // For page 1, return the base data
-    if (page === 1) {
-      return baseData.slice(0, pageSize);
-    }
-    
-    // For other pages, return modified versions of the base data with different numbers
-    return baseData.map((item, index) => ({
-      ...item,
-      no: (page - 1) * pageSize + index + 1,
-      nama: `${item.nama} (Tahap ${page})`,
-    })).slice(0, pageSize);
-  }
-  
-  // Fetch all dashboard data at once
-  const fetchAllDashboardData = useCallback(async (filters = {}) => {
-    setLoadingState({ stats: true, charts: true, table: true });
+  }, [filters, dashboardData.stats]);
+
+  // Helper function to fetch chart data
+  const fetchChartData = useCallback(async (chartType, currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
     
     try {
-      // If no filters are provided, use Jakarta Selatan as default
-      const useFilters = Object.keys(filters).length > 0 ? filters : {
-        provinsi: 'DKI Jakarta',
-        daerahTingkat: 'Kota',
-        kotaKab: 'Jakarta Selatan'
-      };
+      const data = await getChartData(chartType, filtersToUse);
       
-      // Fetch all data in parallel
-      const [stats, chartResults, tableResults] = await Promise.all([
-        fetchDashboardStats(useFilters),
-        fetchChartData(useFilters),
-        fetchTableData(1, 10, useFilters)
-      ]);
+      // Update state with fetched data
+      setDashboardData(prev => ({
+        ...prev,
+        charts: {
+          ...prev.charts,
+          [chartType]: data
+        }
+      }));
       
-      return {
-        stats,
-        pieData: chartResults.pie,
-        barData: chartResults.bar,
-        tableData: tableResults
-      };
+      return data;
     } catch (error) {
-      console.error('Error fetching all dashboard data:', error);
-      // Use Jakarta Selatan fallback data
-      return {
-        stats: dashboardStats,
-        pieData: chartData.pie,
-        barData: chartData.bar,
-        tableData: { data: tableData, total: totalItems }
-      };
-    } finally {
-      setLoadingState({ stats: false, charts: false, table: false });
+      console.error(`Error fetching ${chartType} chart:`, error);
+      // Return current chart data on error
+      return dashboardData.charts[chartType];
     }
-  }, [fetchDashboardStats, fetchChartData, fetchTableData, dashboardStats, chartData, tableData, totalItems]);
-  
-  // Helper function to determine status
-  function determineStatus(item) {
-    // Logic to determine status based on the data
+  }, [filters, dashboardData.charts]);
+
+  // Format wilayah from item data
+  const formatWilayah = useCallback((item) => {
+    if (item.lokasi) return item.lokasi;
+    
+    if (item.provinsi) {
+      let result = '';
+      if (item.daerah_tingkat) result += `${item.daerah_tingkat} `;
+      if (item.kota_kab) result += item.kota_kab;
+      if (result) result += `, ${item.provinsi}`;
+      else result = item.provinsi;
+      return result;
+    }
+    
+    return '';
+  }, []);
+
+  // Determine status based on item data
+  const determineStatus = useCallback((item) => {
     const currentDate = new Date();
     const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
     
@@ -352,22 +216,248 @@ export function DataProvider({ children }) {
     if (itemDate < currentDate) return 'Hrge Esak Btorch';
     if (item.is_pdn === false) return 'Dibth Flnxnnm';
     return 'Sesuai';
-  }
-  
-  const value = {
-    // State
-    dashboardStats,
-    chartData,
-    tableData,
-    totalItems,
-    loading: loadingState,
+  }, []);
+
+  // Calculate total items for pagination
+  const calculateTotalItems = useCallback((data, page, limit, currentTotal) => {
+    // If we have fewer items than the limit, we can calculate the exact total
+    if (data.length < limit) {
+      return (page - 1) * limit + data.length;
+    }
     
-    // Actions
+    // Otherwise, we know there are at least this many items
+    const minTotal = page * limit;
+    
+    // Use the larger of our current estimate and the new minimum
+    return Math.max(minTotal, currentTotal || 0);
+  }, []);
+  
+  // Helper function to fetch table data
+  const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    
+    // Use provided page and limit
+    const tableFilters = {
+      ...filtersToUse,
+      page,
+      limit
+    };
+    
+    try {
+      const data = await getFilteredPackages(tableFilters);
+      
+      // Process table data
+      const processedData = data.map((item, index) => ({
+        no: (page - 1) * limit + index + 1,
+        nama: item.paket || '',
+        satuan: item.satuan_kerja || '',
+        krema: item.metode || '',
+        jadwal: item.pemilihan || 'Belum ditentukan',
+        wilayah: formatWilayah(item),
+        status: determineStatus(item),
+        keterangan: item.jenis_pengadaan || ''
+      }));
+      
+      // Calculate total items based on API response
+      const totalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
+      
+      // Update state with fetched data
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          data: processedData,
+          totalItems
+        }
+      }));
+      
+      return processedData;
+    } catch (error) {
+      console.error('Error fetching table data:', error);
+      // Keep current table data on error
+      return dashboardData.table.data;
+    }
+  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems]);
+
+  // Single function to fetch all dashboard data in one go
+  // With debounce and loop prevention
+  const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
+    // Use current filters if not provided
+    const filtersToUse = currentFilters || filters;
+    
+    // Check if there's already a fetch in progress
+    if (pendingFetchRef.current) {
+      logDebug('Fetch already in progress, skipping', { filters: filtersToUse });
+      return null;
+    }
+    
+    // Debounce fetches - don't fetch more often than every 500ms
+    const now = Date.now();
+    if (now - lastFetchTimeRef.current < 500) {
+      logDebug('Debouncing fetch, too soon since last fetch', {
+        timeSinceLast: now - lastFetchTimeRef.current,
+        filters: filtersToUse
+      });
+      return null;
+    }
+    
+    // Create a new pending promise
+    pendingFetchRef.current = (async () => {
+      logDebug('Starting fetch all dashboard data', { filters: filtersToUse });
+      lastFetchTimeRef.current = now;
+      
+      // Set loading state
+      setLoadingState(prev => ({ 
+        ...prev, 
+        dashboard: true,
+        stats: true,
+        charts: true,
+        table: true
+      }));
+      
+      try {
+        // Fetch all data in parallel to reduce overall loading time
+        const [stats, pieData, barData, tableData] = await Promise.all([
+          fetchDashboardStats(filtersToUse),
+          fetchChartData('pie', filtersToUse),
+          fetchChartData('bar', filtersToUse),
+          fetchTableData(filtersToUse.page, filtersToUse.limit, filtersToUse)
+        ]);
+        
+        dataFetchedRef.current = true;
+        
+        // Success - error will be null
+        setError(prev => ({ ...prev, dashboard: null }));
+        
+        return { stats, pieData, barData, tableData };
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        setError(prev => ({ ...prev, dashboard: error.message }));
+        return null;
+      } finally {
+        setLoadingState(prev => ({ 
+          ...prev, 
+          dashboard: false,
+          stats: false,
+          charts: false,
+          table: false,
+          initial: false // Clear initial loading state
+        }));
+        pendingFetchRef.current = null;
+      }
+    })();
+    
+    return pendingFetchRef.current;
+  }, [filters, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
+
+  // Function to update filters and fetch new data
+  // With anti-loop protection
+  const updateFilters = useCallback((newFilters) => {
+    // Debug log
+    logDebug('updateFilters called with', newFilters);
+    
+    // Check if the new filters are actually different from current filters
+    let hasChanged = false;
+    const updatedFilters = { ...filters };
+    
+    // Check each key for actual changes
+    Object.keys(newFilters).forEach(key => {
+      // Special handling for objects and arrays
+      if (typeof newFilters[key] === 'object' && newFilters[key] !== null) {
+        if (JSON.stringify(newFilters[key]) !== JSON.stringify(filters[key])) {
+          updatedFilters[key] = newFilters[key];
+          hasChanged = true;
+        }
+      } 
+      // Standard value comparison
+      else if (newFilters[key] !== filters[key]) {
+        updatedFilters[key] = newFilters[key];
+        hasChanged = true;
+      }
+    });
+    
+    // If nothing has changed, don't update state or trigger new fetch
+    if (!hasChanged) {
+      logDebug('No filter changes detected, skipping update');
+      return filters;
+    }
+    
+    // Reset to page 1 if anything other than page changes
+    const isPageChangeOnly = 
+      Object.keys(newFilters).length === 1 && 
+      Object.keys(newFilters)[0] === 'page';
+    
+    if (!isPageChangeOnly && newFilters.page === undefined) {
+      updatedFilters.page = 1;
+    }
+    
+    // Update filters state
+    setFilters(updatedFilters);
+    
+    // Schedule fetch for next tick to avoid potential loops
+    setTimeout(() => {
+      // Only fetch new data if something other than page changed
+      // or if page changed and we're in pagination mode
+      if (!isPageChangeOnly || dataFetchedRef.current) {
+        fetchAllDashboardData(updatedFilters);
+      }
+    }, 0);
+    
+    return updatedFilters;
+  }, [filters, fetchAllDashboardData, logDebug]);
+
+  // Initial data loading (only once)
+  useEffect(() => {
+    if (loadingState.initial && !dataFetchedRef.current) {
+      logDebug('Initial data load');
+      // Load data with default filters (Jakarta Selatan)
+      fetchAllDashboardData();
+    }
+  }, [loadingState.initial, fetchAllDashboardData, logDebug]);
+
+  // Create the context value
+  const contextValue = useMemo(() => ({
+    // Data
+    dashboardStats: dashboardData.stats,
+    chartData: dashboardData.charts,
+    tableData: dashboardData.table.data,
+    totalItems: dashboardData.table.totalItems,
+    regions: dashboardData.regions,
+    
+    // Filters
+    filters,
+    
+    // Loading states
+    loading: {
+      dashboard: loadingState.dashboard,
+      regions: loadingState.regions,
+      initial: loadingState.initial,
+      stats: loadingState.stats,
+      charts: loadingState.charts,
+      table: loadingState.table
+    },
+    
+    // Error states
+    error,
+    
+    // Functions
+    updateFilters,
+    fetchAllDashboardData,
+    
+    // Individual data fetching functions for compatibility
     fetchDashboardStats,
     fetchChartData,
-    fetchTableData,
-    fetchAllDashboardData
-  };
+    fetchTableData
+  }), [
+    dashboardData, 
+    filters, 
+    loadingState, 
+    error,
+    updateFilters,
+    fetchAllDashboardData,
+    fetchDashboardStats,
+    fetchChartData,
+    fetchTableData
+  ]);
   
-  return <DataContext.Provider value={value}>{children}</DataContext.Provider>;
+  return <DataContext.Provider value={contextValue}>{children}</DataContext.Provider>;
 }

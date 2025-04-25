@@ -1,35 +1,18 @@
 "use client"
 
-import { memo, Suspense, lazy } from 'react';
+import { memo, Suspense, lazy, useMemo } from 'react';
+import { useData } from '@/app/context/DataContext';
 
 // Komponen chart placeholder saat loading
 const ChartPlaceholder = () => (
   <div className="h-64 w-full bg-gray-100 animate-pulse rounded"></div>
 );
 
-// Lazy load chart components dengan Suspense
+// Lazy load chart components untuk performa lebih baik
 const PieChartComponent = lazy(() => import('./PieChartComponent'));
 const BarChartComponent = lazy(() => import('./BarChartComponent'));
 
-// Default data jika data dari API kosong atau belum tersedia
-const defaultPieData = [
-  { name: 'Event Budaya', value: 46.1 },
-  { name: 'Kesehatan', value: 28.4 },
-  { name: 'WhatsApp Bisnis', value: 15.2 },
-  { name: 'Event Seni', value: 10.3 }
-];
-
-const defaultBarData = [
-  { name: 'Event Budaya', value: 30 },
-  { name: 'Kampanye Kesehatan', value: 24 },
-  { name: 'WhatsApp Bisnis', value: 18 },
-  { name: 'Event Seni Bisnis', value: 15 },
-  { name: 'Event Budaya 2', value: 12 },
-  { name: 'WhatsApp Bisnis 2', value: 8 },
-  { name: 'Lainnya', value: 5 }
-];
-
-// Memoized chart components to prevent unnecessary re-renders
+// Memoized chart components untuk mencegah re-render yang tidak perlu
 const MemoizedPieChart = memo(({ data }) => (
   <Suspense fallback={<ChartPlaceholder />}>
     <PieChartComponent data={data} />
@@ -42,17 +25,50 @@ const MemoizedBarChart = memo(({ data }) => (
   </Suspense>
 ));
 
-function ChartsSection({ pieData, barData, isLoading }) {
-  // Gunakan data dari props jika tersedia, jika tidak gunakan default
-  const finalPieData = pieData && pieData.length > 0 ? pieData : defaultPieData;
-  const finalBarData = barData && barData.length > 0 ? barData : defaultBarData;
+// Komponen untuk state loading
+const LoadingChart = () => (
+  <div className="h-64 flex items-center justify-center">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+  </div>
+);
+
+// Komponen untuk state error
+const ErrorChart = ({ message }) => (
+  <div className="h-64 flex flex-col items-center justify-center">
+    <p className="text-red-500">Gagal memuat chart</p>
+    {message && <p className="text-sm text-gray-500 mt-2">{message}</p>}
+  </div>
+);
+
+// Komponen untuk state kosong
+const EmptyChart = ({ type }) => (
+  <div className="h-64 flex flex-col items-center justify-center">
+    <p className="text-gray-500">Tidak ada data {type === 'pie' ? 'distribusi' : 'paket'}</p>
+  </div>
+);
+
+function ChartsSection({ 
+  // Props for backward compatibility
+  pieData: propsPieData, 
+  barData: propsBarData, 
+  isLoading: propsIsLoading,
+  // New prop to determine if we use the DataContext
+  useDataContext = true
+}) {
+  // Get data from context if useDataContext is true
+  const { chartData, loading, error } = useDataContext 
+    ? useData() 
+    : { chartData: { pie: [], bar: [] }, loading: { charts: false }, error: {} };
   
-  // Loading state template
-  const LoadingChart = () => (
-    <div className="h-64 flex items-center justify-center">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-    </div>
-  );
+  // Determine which data source to use
+  const pieData = useDataContext ? chartData.pie : propsPieData;
+  const barData = useDataContext ? chartData.bar : propsBarData;
+  const isLoading = useDataContext ? loading.charts : propsIsLoading;
+  const errorMessage = useDataContext ? error?.dashboard || error?.charts : null;
+  
+  // Check if we have valid data
+  const hasPieData = Array.isArray(pieData) && pieData.length > 0;
+  const hasBarData = Array.isArray(barData) && barData.length > 0;
   
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -60,20 +76,28 @@ function ChartsSection({ pieData, barData, isLoading }) {
         <h2 className="text-lg font-semibold mb-4">Distribusi Paket Pekerjaan</h2>
         {isLoading ? (
           <LoadingChart />
+        ) : errorMessage ? (
+          <ErrorChart message={errorMessage} />
+        ) : !hasPieData ? (
+          <EmptyChart type="pie" />
         ) : (
           <div className="h-64">
-            <MemoizedPieChart data={finalPieData} />
+            <MemoizedPieChart data={pieData} />
           </div>
         )}
       </div>
       
       <div className="bg-white rounded-lg shadow-sm p-4">
-        <h2 className="text-lg font-semibold mb-4">Paket Pekerjaan Sesuai</h2>
+        <h2 className="text-lg font-semibold mb-4">Paket Pekerjaan Teratas</h2>
         {isLoading ? (
           <LoadingChart />
+        ) : errorMessage ? (
+          <ErrorChart message={errorMessage} />
+        ) : !hasBarData ? (
+          <EmptyChart type="bar" />
         ) : (
           <div className="h-64">
-            <MemoizedBarChart data={finalBarData} />
+            <MemoizedBarChart data={barData} />
           </div>
         )}
       </div>
@@ -81,5 +105,5 @@ function ChartsSection({ pieData, barData, isLoading }) {
   );
 }
 
-// Export memoized component to prevent unnecessary re-renders
+// Export memoized component untuk mencegah re-render yang tidak perlu
 export default memo(ChartsSection);

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useTransition } from 'react';
+import { useState, useEffect, useCallback, useMemo, useTransition, useRef } from 'react';
 import { useData } from '@/app/context/DataContext';
 import dynamic from 'next/dynamic';
 import DashboardHeader from '@/components/DashboardHeader';
@@ -9,7 +9,7 @@ import SecondarySection from '@/components/SecondarySection';
 import FilterBar from '@/components/FilterBar';
 import DashboardFooter from '@/components/DashboardFooter';
 
-// Lazy-load heavy components (correctly for client components)
+// Lazy-load heavy components for better performance
 const ChartsSection = dynamic(() => import('@/components/ChartsSection'), {
   loading: () => (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -27,115 +27,203 @@ const TableSection = dynamic(() => import('@/components/TableSection'), {
 
 // Main Dashboard content component
 export default function ClientPage() {
-  // State for filters (default to Jakarta Selatan)
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterYear, setFilterYear] = useState('2025');
+  // Refs to prevent update loops
+  const updatingFiltersRef = useRef(false);
+  const filtersTimeoutRef = useRef(null);
   
-  // Create a default Jakarta Selatan region
-  const defaultJakselRegion = {
-    id: 'region-jaksel',
-    name: 'Kota Jakarta Selatan', 
-    provinsi: 'DKI Jakarta', 
-    type: 'Kota', 
-    count: 542
-  };
+  // Debug logger
+  const logDebug = useCallback((message, data) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[ClientPage] ${message}`, data);
+    }
+  }, []);
   
-  // Initialize with null, but will be set to either Jakarta Selatan or "all" by RegionDropdown
-  const [selectedRegion, setSelectedRegion] = useState(null);
-  const [selectedLocation, setSelectedLocation] = useState(null);
-  const [isPending, startTransition] = useTransition();
-  
-  // Get data and functions from context
+  // Get data and functions from DataContext
   const { 
     dashboardStats, 
     chartData,
     loading, 
-    fetchAllDashboardData 
+    filters,
+    updateFilters,
+    error
   } = useData();
   
-  // Prepare filters object for API calls
-  const filters = useMemo(() => {
-    const result = {};
+  // Local UI state (will update DataContext on submit/debounce)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterYear, setFilterYear] = useState('2025');
+  const [selectedRegion, setSelectedRegion] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [isPending, startTransition] = useTransition();
+  
+  // Initialize local state from DataContext
+  useEffect(() => {
+    // Skip if we're in the middle of updating filters to avoid loops
+    if (updatingFiltersRef.current) return;
+    
+    // Only update if filters is defined
+    if (filters) {
+      logDebug('Syncing from context filters to local state', filters);
+      
+      if (filters.searchQuery !== undefined && filters.searchQuery !== searchQuery) {
+        setSearchQuery(filters.searchQuery);
+      }
+      
+      if (filters.year !== undefined && filters.year.toString() !== filterYear) {
+        setFilterYear(filters.year.toString());
+      }
+    }
+  }, [filters, searchQuery, filterYear, logDebug]);
+  
+  // Create filters object for context update
+  const prepareFilters = useCallback(() => {
+    const newFilters = {};
     
     // Add filter year
     if (filterYear) {
-      result.year = parseInt(filterYear);
+      newFilters.year = parseInt(filterYear);
     }
     
     // Add search query if provided
     if (searchQuery) {
-      result.search = searchQuery;
+      newFilters.searchQuery = searchQuery;
     }
     
     // Add region filter if selected
     if (selectedRegion && selectedRegion.id !== 'all') {
-      result.regionId = selectedRegion.id;
+      newFilters.regionId = selectedRegion.id;
       
       if (selectedRegion.id.startsWith('province-')) {
-        result.provinsi = selectedRegion.name;
+        newFilters.provinsi = selectedRegion.name;
+        // Clear any district filters
+        newFilters.daerahTingkat = null;
+        newFilters.kotaKab = null;
       } else if (selectedRegion.id.startsWith('region-')) {
-        result.provinsi = selectedRegion.provinsi;
-        result.daerahTingkat = selectedRegion.type;
+        newFilters.provinsi = selectedRegion.provinsi;
+        newFilters.daerahTingkat = selectedRegion.type;
         // Extract kota_kab from the name by removing the type
-        const kotaKab = selectedRegion.name.replace(selectedRegion.type, '').trim();
-        result.kotaKab = kotaKab;
+        const kotaKab = selectedRegion.name.replace(selectedRegion.type || '', '').trim();
+        newFilters.kotaKab = kotaKab;
       }
+    } else if (selectedRegion && selectedRegion.id === 'all') {
+      // Clear region filters if "all" is selected
+      newFilters.regionId = null;
+      newFilters.provinsi = null;
+      newFilters.daerahTingkat = null;
+      newFilters.kotaKab = null;
     }
     
     // Add location filter if selected
     if (selectedLocation) {
-      result.regionId = selectedLocation.id;
-      result.provinsi = selectedLocation.provinsi;
+      newFilters.regionId = selectedLocation.id;
+      newFilters.provinsi = selectedLocation.provinsi;
       if (selectedLocation.type) {
-        result.daerahTingkat = selectedLocation.type;
+        newFilters.daerahTingkat = selectedLocation.type;
         // Extract kota_kab from the name by removing the type
-        const kotaKab = selectedLocation.name.replace(selectedLocation.type, '').trim();
-        result.kotaKab = kotaKab;
+        const kotaKab = selectedLocation.name.replace(selectedLocation.type || '', '').trim();
+        newFilters.kotaKab = kotaKab;
       }
     }
     
-    // If no specific filter is selected, default to Jakarta Selatan
-    if (!searchQuery && !selectedRegion && !selectedLocation) {
-      result.provinsi = 'DKI Jakarta';
-      result.daerahTingkat = 'Kota';
-      result.kotaKab = 'Jakarta Selatan';
-    }
-    
-    return result;
+    return newFilters;
   }, [filterYear, selectedRegion, selectedLocation, searchQuery]);
   
-  // Fetch dashboard data when filters change
-  useEffect(() => {
-    // Use transition to prevent UI freezing
-    startTransition(() => {
-      fetchAllDashboardData(filters);
-    });
-  }, [filters, fetchAllDashboardData]);
+  // Handle filter updates - debounced with loop prevention
+  const updateFiltersWithDebounce = useCallback(() => {
+    // Clear any pending timeouts
+    if (filtersTimeoutRef.current) {
+      clearTimeout(filtersTimeoutRef.current);
+    }
+    
+    // Set a new timeout to update filters after debounce period
+    filtersTimeoutRef.current = setTimeout(() => {
+      const newFilters = prepareFilters();
+      
+      // Set updating flag to prevent loops
+      updatingFiltersRef.current = true;
+      
+      logDebug('Debounced filter update', newFilters);
+      
+      if (typeof updateFilters === 'function') {
+        startTransition(() => {
+          updateFilters(newFilters);
+          
+          // Reset updating flag after a small delay
+          setTimeout(() => {
+            updatingFiltersRef.current = false;
+          }, 100);
+        });
+      } else {
+        console.error('updateFilters is not a function. Check DataContext setup.');
+        updatingFiltersRef.current = false;
+      }
+    }, 500); // 500ms debounce
+  }, [prepareFilters, updateFilters, logDebug]);
   
-  // Handle location selection changes with debounce
+  // Update filters when search, year, region or location changes
+  // But with loop prevention
+  useEffect(() => {
+    // Skip if we're in the middle of updating from context to local state
+    if (updatingFiltersRef.current) return;
+    
+    logDebug('Filter dependencies changed, scheduling update', { 
+      searchQuery, filterYear, selectedRegion, selectedLocation 
+    });
+    
+    updateFiltersWithDebounce();
+    
+    // Cleanup function
+    return () => {
+      if (filtersTimeoutRef.current) {
+        clearTimeout(filtersTimeoutRef.current);
+      }
+    };
+  }, [searchQuery, filterYear, selectedRegion, selectedLocation, updateFiltersWithDebounce, logDebug]);
+  
+  // Handle location selection changes
   const handleLocationChange = useCallback((location) => {
+    logDebug('Location changed', location);
     setSelectedLocation(location);
     // Reset region selection when location is selected
     if (location) {
       setSelectedRegion(null);
     }
-  }, []);
+  }, [logDebug]);
 
-  // Handle region selection changes with debounce
+  // Handle region selection changes
   const handleRegionChange = useCallback((region) => {
+    logDebug('Region changed', region);
     setSelectedRegion(region);
     // Reset location selection when region is selected
     if (region && region.id !== 'all') {
       setSelectedLocation(null);
     }
-  }, []);
+  }, [logDebug]);
 
-  // Debounced search query handler
-  const handleSearchQueryChange = useCallback((value) => {
-    startTransition(() => {
-      setSearchQuery(value);
-    });
-  }, []);
+  // Handler for search query changes
+  const handleSearchQueryChange = useCallback((query) => {
+    logDebug('Search query changed', query);
+    setSearchQuery(query);
+  }, [logDebug]);
+
+  // Show error state if DataContext reported an error
+  if (error && error.dashboard) {
+    return (
+      <div className="container mx-auto px-4 py-6">
+        <DashboardHeader />
+        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Terjadi Kesalahan</h2>
+          <p className="mb-4">{error.dashboard}</p>
+          <p className="text-gray-600">Silakan coba muat ulang halaman atau hubungi administrator sistem.</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Muat Ulang
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -143,7 +231,7 @@ export default function ClientPage() {
       
       <SummaryCards 
         data={dashboardStats} 
-        isLoading={loading.stats || isPending}
+        isLoading={loading.dashboard || loading.stats || isPending}
       />
       
       <SecondarySection 
@@ -164,10 +252,12 @@ export default function ClientPage() {
       <ChartsSection 
         pieData={chartData.pie}
         barData={chartData.bar}
-        isLoading={loading.charts || isPending}
+        isLoading={loading.dashboard || loading.charts || isPending}
       />
       
       <TableSection 
+        useDataContext={true}
+        // For backward compatibility
         searchQuery={searchQuery} 
         filterYear={filterYear}
         selectedRegion={selectedRegion}

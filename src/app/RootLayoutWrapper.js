@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import { DataProvider } from '@/app/context/DataContext';
 
-// Root Layout Wrapper dengan loading skeleton
+// Root Layout Wrapper with loading skeleton
 export default function RootLayoutWrapper({ children }) {
   const [isClient, setIsClient] = useState(false);
 
