@@ -2,7 +2,13 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { getDashboardStats, getChartData, getFilteredPackages, getRegionsList } from '@/app/apiService';
+import { 
+  getDashboardStats, 
+  getChartData, 
+  getFilteredPackages, 
+  getRegionsList,
+  getPackageCount  // Import the count function
+} from '@/app/apiService';
 
 // Create context
 const DataContext = createContext(null);
@@ -220,23 +226,84 @@ export function DataProvider({ children }) {
 
   // Calculate total items for pagination
   const calculateTotalItems = useCallback((data, page, limit, currentTotal) => {
-    // If we have fewer items than the limit, we can calculate the exact total
-    if (data.length < limit) {
+    // If the API directly provides a total count
+    if (data.totalCount !== undefined) {
+      return data.totalCount;
+    }
+    
+    // Calculate based on the data we have
+    if (!Array.isArray(data)) {
+      return currentTotal || 0;
+    }
+    
+    // Case 1: If this is the first page and we got fewer items than the limit,
+    // then this is the exact total
+    if (page === 1 && data.length < limit) {
+      return data.length;
+    }
+    
+    // Case 2: If we have a full page of data, we know there are at least
+    // this many items (current page * limit), possibly more
+    if (data.length >= limit) {
+      // Ensure our total count is at least the items we've seen plus one more page
+      return Math.max(currentTotal || 0, page * limit + 1);
+    }
+    
+    // Case 3: If we have a partial page (not the first page), we can calculate exactly
+    if (data.length < limit && page > 1) {
       return (page - 1) * limit + data.length;
     }
     
-    // Otherwise, we know there are at least this many items
-    const minTotal = page * limit;
-    
-    // Use the larger of our current estimate and the new minimum
-    return Math.max(minTotal, currentTotal || 0);
+    // Default: Keep the current total if higher, or calculate based on what we know
+    return Math.max(currentTotal || 0, page * limit);
   }, []);
   
-  // Helper function to fetch table data
+  // Function to fetch just the total count of items
+  const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    
+    try {
+      logDebug('Fetching total item count for all records', filtersToUse);
+      
+      // Using the imported getPackageCount function
+      const totalCount = await getPackageCount(filtersToUse);
+      
+      logDebug('API returned total count', totalCount);
+      
+      // Update dashboard data with the exact total count
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          totalItems: totalCount
+        }
+      }));
+      
+      return totalCount;
+    } catch (error) {
+      console.error('Error fetching total item count:', error);
+      
+      // On error, use a high default value rather than the current count
+      // This ensures pagination works even if we can't get the exact count
+      const fallbackCount = 1500;
+      
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          totalItems: fallbackCount
+        }
+      }));
+      
+      return fallbackCount;
+    }
+  }, [filters, logDebug]);
+
+  // Enhanced function to fetch table data with better pagination handling
   const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
     const filtersToUse = currentFilters || filters;
     
-    // Use provided page and limit
+    // Make sure we use the provided page and limit
     const tableFilters = {
       ...filtersToUse,
       page,
@@ -244,6 +311,11 @@ export function DataProvider({ children }) {
     };
     
     try {
+      setLoadingState(prev => ({ ...prev, table: true }));
+      
+      // Log pagination request for debugging
+      logDebug('Fetching table data with pagination:', { page, limit, filters: tableFilters });
+      
       const data = await getFilteredPackages(tableFilters);
       
       // Process table data
@@ -259,14 +331,24 @@ export function DataProvider({ children }) {
       }));
       
       // Calculate total items based on API response
-      const totalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
+      const hasFullPage = data.length >= limit;
+      const newTotalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
+      
+      logDebug('Table data received:', { 
+        count: data.length, 
+        hasFullPage, 
+        page, 
+        limit,
+        estimatedTotal: newTotalItems
+      });
       
       // Update state with fetched data
       setDashboardData(prev => ({
         ...prev,
         table: {
           data: processedData,
-          totalItems
+          totalItems: newTotalItems,
+          hasFullPage
         }
       }));
       
@@ -275,8 +357,10 @@ export function DataProvider({ children }) {
       console.error('Error fetching table data:', error);
       // Keep current table data on error
       return dashboardData.table.data;
+    } finally {
+      setLoadingState(prev => ({ ...prev, table: false }));
     }
-  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems]);
+  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, getFilteredPackages, logDebug]);
 
   // Single function to fetch all dashboard data in one go
   // With debounce and loop prevention
@@ -315,7 +399,10 @@ export function DataProvider({ children }) {
       }));
       
       try {
-        // Fetch all data in parallel to reduce overall loading time
+        // First fetch the total count to ensure accurate pagination
+        await fetchTotalItemCount(filtersToUse);
+        
+        // Then fetch all other data in parallel to reduce overall loading time
         const [stats, pieData, barData, tableData] = await Promise.all([
           fetchDashboardStats(filtersToUse),
           fetchChartData('pie', filtersToUse),
@@ -347,7 +434,7 @@ export function DataProvider({ children }) {
     })();
     
     return pendingFetchRef.current;
-  }, [filters, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
+  }, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
 
   // Function to update filters and fetch new data
   // With anti-loop protection
@@ -357,6 +444,7 @@ export function DataProvider({ children }) {
     
     // Check if the new filters are actually different from current filters
     let hasChanged = false;
+    let hasChangedPageOnly = false;
     const updatedFilters = { ...filters };
     
     // Check each key for actual changes
@@ -366,12 +454,16 @@ export function DataProvider({ children }) {
         if (JSON.stringify(newFilters[key]) !== JSON.stringify(filters[key])) {
           updatedFilters[key] = newFilters[key];
           hasChanged = true;
+          if (key !== 'page') hasChangedPageOnly = false;
         }
       } 
       // Standard value comparison
       else if (newFilters[key] !== filters[key]) {
         updatedFilters[key] = newFilters[key];
         hasChanged = true;
+        if (key === 'page' && Object.keys(newFilters).length === 1) {
+          hasChangedPageOnly = true;
+        }
       }
     });
     
@@ -382,11 +474,7 @@ export function DataProvider({ children }) {
     }
     
     // Reset to page 1 if anything other than page changes
-    const isPageChangeOnly = 
-      Object.keys(newFilters).length === 1 && 
-      Object.keys(newFilters)[0] === 'page';
-    
-    if (!isPageChangeOnly && newFilters.page === undefined) {
+    if (hasChanged && !hasChangedPageOnly && newFilters.page === undefined) {
       updatedFilters.page = 1;
     }
     
@@ -395,15 +483,21 @@ export function DataProvider({ children }) {
     
     // Schedule fetch for next tick to avoid potential loops
     setTimeout(() => {
-      // Only fetch new data if something other than page changed
-      // or if page changed and we're in pagination mode
-      if (!isPageChangeOnly || dataFetchedRef.current) {
+      // If only the page changed, just fetch the table data for that page
+      if (hasChangedPageOnly) {
+        // Use the page from newFilters, fallback to current page
+        const pageToFetch = newFilters.page || filters.page || 1;
+        const limitToUse = filters.limit || 10;
+        
+        fetchTableData(pageToFetch, limitToUse, updatedFilters);
+      } else {
+        // Other filters changed, fetch all data
         fetchAllDashboardData(updatedFilters);
       }
     }, 0);
     
     return updatedFilters;
-  }, [filters, fetchAllDashboardData, logDebug]);
+  }, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
 
   // Initial data loading (only once)
   useEffect(() => {
@@ -442,6 +536,7 @@ export function DataProvider({ children }) {
     // Functions
     updateFilters,
     fetchAllDashboardData,
+    fetchTotalItemCount, // Add this new function
     
     // Individual data fetching functions for compatibility
     fetchDashboardStats,
@@ -454,6 +549,7 @@ export function DataProvider({ children }) {
     error,
     updateFilters,
     fetchAllDashboardData,
+    fetchTotalItemCount, // Include in dependency array
     fetchDashboardStats,
     fetchChartData,
     fetchTableData

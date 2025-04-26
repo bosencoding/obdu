@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -21,6 +21,8 @@ export default function TableSection({
     loading, 
     filters,
     updateFilters,
+    fetchTableData,
+    fetchTotalItemCount,
     error
   } = useData();
   
@@ -38,23 +40,48 @@ export default function TableSection({
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   
-  // Update page in context when page changes
-  useEffect(() => {
-    if (useDataContext && typeof updateFilters === 'function' && filters && currentPage !== filters.page) {
-      updateFilters({ page: currentPage });
-    }
-  }, [currentPage, filters, updateFilters, useDataContext]);
+  // Use context total items - default to 1500 if not available
+  // This ensures pagination works with a large number of pages initially
+  const totalItems = useDataContext 
+    ? (contextTotalItems || 1500)
+    : allData.length;
   
-  // Sync local page with context page
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  
+  // Force show next page button if we have a full page of items
+  const shouldShowNextPage = tableData.length >= itemsPerPage;
+  
+  // Fetch total item count on component mount and when filters change
+  // This ensures we always have the most accurate count
   useEffect(() => {
-    if (useDataContext && filters && filters.page && filters.page !== currentPage) {
+    if (useDataContext && typeof fetchTotalItemCount === 'function') {
+      fetchTotalItemCount(filters);
+    }
+  }, [useDataContext, fetchTotalItemCount, filters]);
+  
+  // More reliable handler for pagination changes
+  const handlePageChange = useCallback((newPage) => {
+    if (newPage >= 1 && (newPage <= totalPages || (newPage === currentPage + 1 && shouldShowNextPage))) {
+      setCurrentPage(newPage);
+      
+      if (useDataContext && typeof updateFilters === 'function') {
+        // Important: Use an object with just the page property to avoid overriding other filters
+        updateFilters({ page: newPage });
+        
+        // For more reliable pagination, directly fetch table data with new page
+        if (typeof fetchTableData === 'function') {
+          fetchTableData(newPage, itemsPerPage);
+        }
+      }
+    }
+  }, [useDataContext, updateFilters, fetchTableData, totalPages, itemsPerPage, currentPage, shouldShowNextPage]);
+  
+  // Sync local page with context page when filters change
+  useEffect(() => {
+    if (useDataContext && filters?.page && filters.page !== currentPage) {
       setCurrentPage(filters.page);
     }
   }, [filters, currentPage, useDataContext]);
-  
-  // Calculate pagination values
-  const totalItems = useDataContext ? contextTotalItems : allData.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   
   // Calculate current page data slice (for non-context mode)
   const startIndex = (currentPage - 1) * itemsPerPage;
@@ -100,13 +127,6 @@ export default function TableSection({
     return 'Sesuai';
   }
 
-  // Handle pagination
-  const goToPage = (page) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
-    }
-  };
-  
   // Determine the page title based on context filters or props
   const pageTitle = useDataContext
     ? getPageTitle(filters)
@@ -136,6 +156,43 @@ export default function TableSection({
     // Default
     return 'Daftar Paket';
   }
+
+  // Generate array of page numbers to display
+  const getPageNumbers = useCallback(() => {
+    const pageNumbers = [];
+    
+    if (totalPages <= 7) {
+      // Show all pages if 7 or fewer
+      for (let i = 1; i <= totalPages; i++) {
+        pageNumbers.push(i);
+      }
+    } else if (currentPage <= 4) {
+      // Near the beginning
+      for (let i = 1; i <= 5; i++) {
+        pageNumbers.push(i);
+      }
+      pageNumbers.push('...');
+      pageNumbers.push(totalPages);
+    } else if (currentPage >= totalPages - 3) {
+      // Near the end
+      pageNumbers.push(1);
+      pageNumbers.push('...');
+      for (let i = totalPages - 4; i <= totalPages; i++) {
+        pageNumbers.push(i);
+      }
+    } else {
+      // Middle
+      pageNumbers.push(1);
+      pageNumbers.push('...');
+      for (let i = currentPage - 1; i <= currentPage + 1; i++) {
+        pageNumbers.push(i);
+      }
+      pageNumbers.push('...');
+      pageNumbers.push(totalPages);
+    }
+    
+    return pageNumbers;
+  }, [currentPage, totalPages]);
   
   // Empty state for when there's no data
   const EmptyState = () => (
@@ -156,6 +213,14 @@ export default function TableSection({
       {message && <p className="mt-2 text-sm text-gray-500">{message}</p>}
     </div>
   );
+  
+  // Get the array of page numbers
+  const pageNumbers = getPageNumbers();
+  
+  // Calculate the actual items shown on the current page
+  const itemsShown = tableData.length;
+  const displayStartIndex = startIndex + 1;
+  const displayEndIndex = startIndex + itemsShown;
   
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
@@ -179,11 +244,11 @@ export default function TableSection({
           {/* Pagination controls */}
           <div className="flex items-center justify-between mt-4 border-t pt-4">
             <div className="text-sm text-gray-500">
-              Menampilkan {totalItems > 0 ? startIndex + 1 : 0} - {Math.min(endIndex, totalItems)} dari {totalItems} item
+              Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems.toLocaleString()} item
             </div>
             <div className="flex items-center space-x-2">
               <button 
-                onClick={() => goToPage(currentPage - 1)}
+                onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
                 className={`p-2 rounded-md ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
                 aria-label="Previous page"
@@ -191,24 +256,20 @@ export default function TableSection({
                 <ChevronLeft size={16} />
               </button>
               
-              {/* Page numbers */}
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                // Logic to show current page and surrounding pages
-                let pageNum;
-                if (totalPages <= 5) {
-                  pageNum = i + 1;
-                } else if (currentPage <= 3) {
-                  pageNum = i + 1;
-                } else if (currentPage >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i;
-                } else {
-                  pageNum = currentPage - 2 + i;
+              {/* Page numbers with ellipsis */}
+              {pageNumbers.map((pageNum, index) => {
+                if (pageNum === '...') {
+                  return (
+                    <span key={`ellipsis-${index}`} className="px-3 py-1 text-gray-400">
+                      ...
+                    </span>
+                  );
                 }
                 
                 return (
                   <button
-                    key={i}
-                    onClick={() => goToPage(pageNum)}
+                    key={`page-${pageNum}`}
+                    onClick={() => handlePageChange(pageNum)}
                     className={`px-3 py-1 rounded-md ${currentPage === pageNum ? 'bg-blue-100 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
                     aria-label={`Page ${pageNum}`}
                     aria-current={currentPage === pageNum ? 'page' : undefined}
@@ -219,9 +280,9 @@ export default function TableSection({
               })}
               
               <button 
-                onClick={() => goToPage(currentPage + 1)}
-                disabled={currentPage === totalPages || totalPages === 0}
-                className={`p-2 rounded-md ${currentPage === totalPages || totalPages === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={!shouldShowNextPage && currentPage === totalPages}
+                className={`p-2 rounded-md ${(!shouldShowNextPage && currentPage === totalPages) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
                 aria-label="Next page"
               >
                 <ChevronRight size={16} />
