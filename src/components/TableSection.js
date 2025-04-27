@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import TableLoadingState from './TableLoadingState';
 
 export default function TableSection({ 
   // Props below for backward compatibility
@@ -14,15 +15,18 @@ export default function TableSection({
   // Use DataContext by default
   useDataContext = true
 }) {
-  // Get data from context
+  // Get data and functions from context with enhanced pagination support
   const { 
     tableData: contextTableData,
+    tableBatchData: contextBatchData,
     totalItems: contextTotalItems, 
     loading, 
     filters,
     updateFilters,
     fetchTableData,
-    fetchTotalItemCount,
+    handlePageChange: contextHandlePageChange,
+    ITEMS_PER_PAGE,
+    ITEMS_PER_BATCH,
     error
   } = useData();
   
@@ -30,70 +34,101 @@ export default function TableSection({
   const [allData, setAllData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+  const dataLoadedRef = useRef(false);
+  const pageChangeInProgressRef = useRef(false);
+  
+  // Debug logger
+  const logDebug = useCallback((message, data = null) => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[TableSection] ${message}`, data !== null ? data : '');
+    }
+  }, []);
   
   // Determine which data source to use
   const tableData = useDataContext ? contextTableData : allData;
   const loadingState = useDataContext ? (loading.dashboard || loading.table) : isLoading;
   const tableError = useDataContext ? (error?.dashboard || error?.table) : errorMessage;
   
-  // Client-side pagination
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  // Get page from filters
+  const currentPage = filters?.page || 1;
+  const itemsPerPage = ITEMS_PER_PAGE || 10;
+  const itemsPerBatch = ITEMS_PER_BATCH || 50;
   
   // Use context total items - default to 1500 if not available
-  // This ensures pagination works with a large number of pages initially
   const totalItems = useDataContext 
     ? (contextTotalItems || 1500)
     : allData.length;
   
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   
-  // Force show next page button if we have a full page of items
-  const shouldShowNextPage = tableData.length >= itemsPerPage;
+  // Force show next page button if we have a full batch
+  const shouldShowNextPage = contextBatchData?.length >= itemsPerBatch;
   
-  // Fetch total item count on component mount and when filters change
-  // This ensures we always have the most accurate count
+  // Ensure we have initial data
   useEffect(() => {
-    if (useDataContext && filters) {
-      // Sync with current filters
-      setCurrentPage(filters.page || 1);
+    if (useDataContext && !dataLoadedRef.current && !loadingState && !tableData?.length) {
+      // Initial data load
+      logDebug('Initial data loading check');
+      if (typeof fetchTableData === 'function') {
+        logDebug('Fetching initial table data for page 1');
+        fetchTableData(1, itemsPerPage);
+        dataLoadedRef.current = true;
+      }
+    }
+  }, [useDataContext, loadingState, tableData, fetchTableData, itemsPerPage, logDebug]);
+  
+  // Sync with current filters - ensure page state is consistent
+  useEffect(() => {
+    if (useDataContext && filters && !pageChangeInProgressRef.current) {
+      // Log current page state
+      logDebug('Current page from filters:', filters.page);
       
-      // If tableData is empty but we should have data, try to fetch
-      if (tableData.length === 0 && !loadingState && !tableError) {
-        if (typeof fetchTableData === 'function') {
-          fetchTableData(filters.page || 1, itemsPerPage);
+      // If data is missing and not currently loading, try to fetch
+      if (tableData?.length === 0 && !loadingState && !tableError) {
+        if (dataLoadedRef.current && typeof fetchTableData === 'function') {
+          logDebug('No data found, fetching for page', filters.page);
+          fetchTableData(filters.page, itemsPerPage);
         }
       }
     }
-  }, [filters, useDataContext, tableData, loadingState, tableError, fetchTableData, itemsPerPage]);
+  }, [useDataContext, filters, tableData, loadingState, tableError, fetchTableData, itemsPerPage, logDebug]);
   
-  // More reliable handler for pagination changes
+  // Enhanced handler for page changes
   const handlePageChange = useCallback((newPage) => {
-    if (newPage >= 1 && (newPage <= totalPages || (newPage === currentPage + 1 && shouldShowNextPage))) {
-      setCurrentPage(newPage);
+    if (newPage >= 1 && newPage <= totalPages) {
+      logDebug('Page change requested to', newPage);
+      pageChangeInProgressRef.current = true;
       
-      if (useDataContext && typeof updateFilters === 'function') {
-        // Important: Use an object with just the page property to avoid overriding other filters
-        updateFilters({ page: newPage });
-        
-        // For more reliable pagination, directly fetch table data with new page
-        if (typeof fetchTableData === 'function') {
-          fetchTableData(newPage, itemsPerPage);
+      try {
+        if (useDataContext && typeof contextHandlePageChange === 'function') {
+          // Use the context's handlePageChange function
+          logDebug('Using context handlePageChange for page', newPage);
+          contextHandlePageChange(newPage);
+        } else if (useDataContext && typeof updateFilters === 'function') {
+          // Fallback to updating filters directly
+          logDebug('Using updateFilters for page', newPage);
+          updateFilters({ page: newPage });
+        } else {
+          // Non-context mode
+          logDebug('Local page change to', newPage);
+          // Here you would implement local pagination
         }
+      } finally {
+        // Reset the flag after a short delay to ensure state updates finish
+        setTimeout(() => {
+          pageChangeInProgressRef.current = false;
+        }, 100);
       }
+    } else {
+      logDebug('Invalid page requested:', newPage, 'totalPages:', totalPages);
     }
-  }, [useDataContext, updateFilters, fetchTableData, totalPages, itemsPerPage, currentPage, shouldShowNextPage]);
-  
-  // Sync local page with context page when filters change
-  useEffect(() => {
-    if (useDataContext && filters?.page && filters.page !== currentPage) {
-      setCurrentPage(filters.page);
-    }
-  }, [filters, currentPage, useDataContext]);
+  }, [useDataContext, contextHandlePageChange, updateFilters, totalPages, logDebug]);
   
   // Calculate current page data slice (for non-context mode)
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
+  
+  // The displayData comes directly from context in context mode
   const displayData = useDataContext 
     ? tableData 
     : allData.slice(startIndex, endIndex).map((item, index) => ({
@@ -107,7 +142,7 @@ export default function TableSection({
         wilayah: item.wilayah || item.lokasi || formatWilayah(item)
       }));
   
-  // Format wilayah from item data (for non-context mode)
+  // Non-context mode utility functions
   function formatWilayah(item) {
     if (item.lokasi) return item.lokasi;
     
@@ -123,7 +158,6 @@ export default function TableSection({
     return '-';
   }
   
-  // Determine status based on item data (for non-context mode)
   function determineStatus(item) {
     const currentDate = new Date();
     const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
@@ -159,6 +193,13 @@ export default function TableSection({
     
     if (filters.searchQuery) {
       return `Pencarian: ${filters.searchQuery}`;
+    }
+    
+    // Default for Jakarta Selatan
+    if (filters.provinsi === 'DKI Jakarta' && 
+        filters.kotaKab === 'Jakarta Selatan' && 
+        filters.daerahTingkat === 'Kota') {
+      return 'Kota Jakarta Selatan';
     }
     
     // Default
@@ -226,7 +267,7 @@ export default function TableSection({
   const pageNumbers = getPageNumbers();
   
   // Calculate the actual items shown on the current page
-  const itemsShown = tableData.length;
+  const itemsShown = tableData?.length || 0;
   const displayStartIndex = startIndex + 1;
   const displayEndIndex = startIndex + itemsShown;
   
@@ -237,13 +278,10 @@ export default function TableSection({
       </h2>
       
       {loadingState ? (
-        <div className="text-center py-8">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-          <p className="mt-2 text-gray-500">Memuat data...</p>
-        </div>
+        <TableLoadingState />
       ) : tableError ? (
         <ErrorState message={tableError} />
-      ) : tableData.length === 0 ? (
+      ) : !tableData || tableData.length === 0 ? (
         <EmptyState />
       ) : (
         <>
@@ -251,14 +289,18 @@ export default function TableSection({
           
           {/* Pagination controls */}
           <div className="flex items-center justify-between mt-4 border-t pt-4">
-            <div className="text-sm text-gray-500">
-              Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems.toLocaleString()} item
-            </div>
+          <div className="text-sm text-gray-500">
+            Menampilkan {displayStartIndex} - {displayEndIndex} dari {
+              typeof totalItems === 'number' && totalItems > 0 
+                ? totalItems.toLocaleString() 
+                : '?'
+            } item
+          </div>
             <div className="flex items-center space-x-2">
               <button 
                 onClick={() => handlePageChange(currentPage - 1)}
-                disabled={currentPage === 1}
-                className={`p-2 rounded-md ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                disabled={currentPage === 1 || loadingState}
+                className={`p-2 rounded-md ${currentPage === 1 || loadingState ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
                 aria-label="Previous page"
               >
                 <ChevronLeft size={16} />
@@ -278,7 +320,14 @@ export default function TableSection({
                   <button
                     key={`page-${pageNum}`}
                     onClick={() => handlePageChange(pageNum)}
-                    className={`px-3 py-1 rounded-md ${currentPage === pageNum ? 'bg-blue-100 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+                    disabled={loadingState}
+                    className={`px-3 py-1 rounded-md ${
+                      currentPage === pageNum 
+                        ? 'bg-blue-100 text-blue-600 font-medium' 
+                        : loadingState 
+                          ? 'text-gray-300 cursor-not-allowed' 
+                          : 'text-gray-600 hover:bg-gray-100'
+                    }`}
                     aria-label={`Page ${pageNum}`}
                     aria-current={currentPage === pageNum ? 'page' : undefined}
                   >
@@ -289,8 +338,12 @@ export default function TableSection({
               
               <button 
                 onClick={() => handlePageChange(currentPage + 1)}
-                disabled={!shouldShowNextPage && currentPage === totalPages}
-                className={`p-2 rounded-md ${(!shouldShowNextPage && currentPage === totalPages) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                disabled={currentPage === totalPages || loadingState}
+                className={`p-2 rounded-md ${
+                  currentPage === totalPages || loadingState 
+                    ? 'text-gray-300 cursor-not-allowed' 
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
                 aria-label="Next page"
               >
                 <ChevronRight size={16} />

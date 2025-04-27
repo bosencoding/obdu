@@ -1,8 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, X } from 'lucide-react';
 import { searchLocations } from '@/app/apiService';
+import { useData } from '@/app/context/DataContext';
 
 export default function AutocompleteSearch({ onLocationSelect }) {
+  // Get filters from DataContext to sync with global state
+  const { filters } = useData();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [locations, setLocations] = useState([]);
   const [filteredLocations, setFilteredLocations] = useState([]);
@@ -10,9 +14,36 @@ export default function AutocompleteSearch({ onLocationSelect }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const searchRef = useRef(null);
+  const searchTimerRef = useRef(null);
+
+  // Sync with global filters initially
+  useEffect(() => {
+    // If there's active location filter in global state, reflect it in this component
+    if (filters && filters.kotaKab && filters.daerahTingkat && filters.provinsi) {
+      // Only update if we don't already have a selection or if it's different
+      if (!selectedLocation || 
+          selectedLocation.name !== `${filters.daerahTingkat} ${filters.kotaKab}`) {
+        const locationFromFilters = {
+          id: filters.regionId || `loc-${Date.now()}`, // Fallback ID if none exists
+          name: `${filters.daerahTingkat} ${filters.kotaKab}`,
+          provinsi: filters.provinsi,
+          type: filters.daerahTingkat,
+          count: 0
+        };
+        
+        setSelectedLocation(locationFromFilters);
+        setSearchTerm(`${filters.daerahTingkat} ${filters.kotaKab}`);
+      }
+    }
+  }, [filters]);
 
   // Fetch locations when search term changes
   useEffect(() => {
+    // Clear any pending timers
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+
     const fetchLocationsData = async () => {
       if (!searchTerm || searchTerm.length < 2) {
         setFilteredLocations([]);
@@ -33,11 +64,15 @@ export default function AutocompleteSearch({ onLocationSelect }) {
     };
     
     // Debounce the search to avoid too many API calls
-    const timer = setTimeout(() => {
+    searchTimerRef.current = setTimeout(() => {
       fetchLocationsData();
     }, 300);
     
-    return () => clearTimeout(timer);
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
   }, [searchTerm]);
 
   // Handle click outside to close suggestions
@@ -62,10 +97,14 @@ export default function AutocompleteSearch({ onLocationSelect }) {
     } else {
       setShowSuggestions(false);
     }
-    setSelectedLocation(null);
+    
+    // Clear selected location if search term is changed
+    if (selectedLocation && value !== selectedLocation.name) {
+      setSelectedLocation(null);
+    }
   };
 
-  const handleClearSearch = () => {
+  const handleClearSearch = useCallback(() => {
     setSearchTerm('');
     setSelectedLocation(null);
     setShowSuggestions(false);
@@ -74,9 +113,9 @@ export default function AutocompleteSearch({ onLocationSelect }) {
     if (onLocationSelect) {
       onLocationSelect(null);
     }
-  };
+  }, [onLocationSelect]);
 
-  const handleSelectLocation = (location) => {
+  const handleSelectLocation = useCallback((location) => {
     setSelectedLocation(location);
     setSearchTerm(location.name);
     setShowSuggestions(false);
@@ -85,7 +124,7 @@ export default function AutocompleteSearch({ onLocationSelect }) {
     if (onLocationSelect) {
       onLocationSelect(location);
     }
-  };
+  }, [onLocationSelect]);
 
   return (
     <div className="relative" ref={searchRef}>

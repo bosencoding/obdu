@@ -27,9 +27,26 @@ const TableSection = dynamic(() => import('@/components/TableSection'), {
 
 // Main Dashboard content component
 export default function ClientPage() {
-  // Refs to prevent update loops
-  const updatingFiltersRef = useRef(false);
-  const filtersTimeoutRef = useRef(null);
+  // Get data and functions from DataContext
+  const { 
+    dashboardStats, 
+    chartData,
+    loading, 
+    filters,
+    updateFilters,
+    fetchAllDashboardData,
+    error
+  } = useData();
+  
+  // Local UI state for FilterBar
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterYear, setFilterYear] = useState('2025');
+  const [selectedRegion, setSelectedRegion] = useState(null);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [isPending, startTransition] = useTransition();
+  
+  // Refs for state management
+  const syncingFromContextRef = useRef(false);
   
   // Debug logger
   const logDebug = useCallback((message, data) => {
@@ -38,158 +55,88 @@ export default function ClientPage() {
     }
   }, []);
   
-  // Get data and functions from DataContext
-  const { 
-    dashboardStats, 
-    chartData,
-    loading, 
-    filters,
-    updateFilters,
-    error
-  } = useData();
-  
-  // Local UI state (will update DataContext on submit/debounce)
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterYear, setFilterYear] = useState('2025');
-  const [selectedRegion, setSelectedRegion] = useState(null);
-  const [selectedLocation, setSelectedLocation] = useState(null);
-  const [isPending, startTransition] = useTransition();
-  
-  // Initialize local state from DataContext
+  // Initialize local state from DataContext (sync from context to local state)
   useEffect(() => {
-    // Skip if we're in the middle of updating filters to avoid loops
-    if (updatingFiltersRef.current) return;
+    // Skip if we're already syncing to avoid loops
+    if (syncingFromContextRef.current) return;
     
-    // Only update if filters is defined
+    // Only sync if filters is defined
     if (filters) {
+      syncingFromContextRef.current = true;
       logDebug('Syncing from context filters to local state', filters);
       
-      if (filters.searchQuery !== undefined && filters.searchQuery !== searchQuery) {
-        setSearchQuery(filters.searchQuery);
-      }
-      
-      if (filters.year !== undefined && filters.year.toString() !== filterYear) {
-        setFilterYear(filters.year.toString());
+      try {
+        // Update search query
+        if (filters.searchQuery !== undefined && filters.searchQuery !== searchQuery) {
+          setSearchQuery(filters.searchQuery);
+        }
+        
+        // Update year filter
+        if (filters.year !== undefined) {
+          const yearStr = filters.year.toString();
+          if (yearStr !== filterYear) {
+            setFilterYear(yearStr);
+          }
+        }
+        
+        // Update selected location or region based on filter data
+        if (filters.regionId && filters.daerahTingkat && filters.kotaKab) {
+          // If we have detailed location info, create a location object
+          if (!selectedLocation || selectedLocation.name !== `${filters.daerahTingkat} ${filters.kotaKab}`) {
+            const locationFromFilters = {
+              id: filters.regionId,
+              name: `${filters.daerahTingkat} ${filters.kotaKab}`,
+              provinsi: filters.provinsi,
+              type: filters.daerahTingkat,
+              count: 0
+            };
+            setSelectedLocation(locationFromFilters);
+            
+            // Clear region when location is set
+            if (selectedRegion) {
+              setSelectedRegion(null);
+            }
+          }
+        } else if (filters.regionId && filters.provinsi && !filters.kotaKab) {
+          // If we just have province info, create a region object
+          if (!selectedRegion || selectedRegion.name !== filters.provinsi) {
+            const regionFromFilters = {
+              id: filters.regionId,
+              name: filters.provinsi,
+              provinsi: filters.provinsi,
+              type: null,
+              count: 0
+            };
+            setSelectedRegion(regionFromFilters);
+            
+            // Clear location when region is set
+            if (selectedLocation) {
+              setSelectedLocation(null);
+            }
+          }
+        }
+      } finally {
+        // Important: always reset the syncing flag when done
+        setTimeout(() => {
+          syncingFromContextRef.current = false;
+        }, 50);
       }
     }
-  }, [filters, searchQuery, filterYear, logDebug]);
+  }, [filters, searchQuery, filterYear, selectedRegion, selectedLocation, logDebug]);
   
-  // Create filters object for context update
-  const prepareFilters = useCallback(() => {
-    const newFilters = {};
-    
-    // Add filter year
-    if (filterYear) {
-      newFilters.year = parseInt(filterYear);
-    }
-    
-    // Add search query if provided
-    if (searchQuery) {
-      newFilters.searchQuery = searchQuery;
-    }
-    
-    // Add region filter if selected
-    if (selectedRegion && selectedRegion.id !== 'all') {
-      newFilters.regionId = selectedRegion.id;
-      
-      if (selectedRegion.id.startsWith('province-')) {
-        newFilters.provinsi = selectedRegion.name;
-        // Clear any district filters
-        newFilters.daerahTingkat = null;
-        newFilters.kotaKab = null;
-      } else if (selectedRegion.id.startsWith('region-')) {
-        newFilters.provinsi = selectedRegion.provinsi;
-        newFilters.daerahTingkat = selectedRegion.type;
-        // Extract kota_kab from the name by removing the type
-        const kotaKab = selectedRegion.name.replace(selectedRegion.type || '', '').trim();
-        newFilters.kotaKab = kotaKab;
-      }
-    } else if (selectedRegion && selectedRegion.id === 'all') {
-      // Clear region filters if "all" is selected
-      newFilters.regionId = null;
-      newFilters.provinsi = null;
-      newFilters.daerahTingkat = null;
-      newFilters.kotaKab = null;
-    }
-    
-    // Add location filter if selected
-    if (selectedLocation) {
-      newFilters.regionId = selectedLocation.id;
-      newFilters.provinsi = selectedLocation.provinsi;
-      if (selectedLocation.type) {
-        newFilters.daerahTingkat = selectedLocation.type;
-        // Extract kota_kab from the name by removing the type
-        const kotaKab = selectedLocation.name.replace(selectedLocation.type || '', '').trim();
-        newFilters.kotaKab = kotaKab;
-      }
-    }
-    
-    return newFilters;
-  }, [filterYear, selectedRegion, selectedLocation, searchQuery]);
-  
-  // Handle filter updates - debounced with loop prevention
-  const updateFiltersWithDebounce = useCallback(() => {
-    // Clear any pending timeouts
-    if (filtersTimeoutRef.current) {
-      clearTimeout(filtersTimeoutRef.current);
-    }
-    
-    // Set a new timeout to update filters after debounce period
-    filtersTimeoutRef.current = setTimeout(() => {
-      const newFilters = prepareFilters();
-      
-      // Set updating flag to prevent loops
-      updatingFiltersRef.current = true;
-      
-      logDebug('Debounced filter update', newFilters);
-      
-      if (typeof updateFilters === 'function') {
-        startTransition(() => {
-          updateFilters(newFilters);
-          
-          // Reset updating flag after a small delay
-          setTimeout(() => {
-            updatingFiltersRef.current = false;
-          }, 100);
-        });
-      } else {
-        console.error('updateFilters is not a function. Check DataContext setup.');
-        updatingFiltersRef.current = false;
-      }
-    }, 500); // 500ms debounce
-  }, [prepareFilters, updateFilters, logDebug]);
-  
-  // Update filters when search, year, region or location changes
-  // But with loop prevention
-  useEffect(() => {
-    // Skip if we're in the middle of updating from context to local state
-    if (updatingFiltersRef.current) return;
-    
-    logDebug('Filter dependencies changed, scheduling update', { 
-      searchQuery, filterYear, selectedRegion, selectedLocation 
-    });
-    
-    updateFiltersWithDebounce();
-    
-    // Cleanup function
-    return () => {
-      if (filtersTimeoutRef.current) {
-        clearTimeout(filtersTimeoutRef.current);
-      }
-    };
-  }, [searchQuery, filterYear, selectedRegion, selectedLocation, updateFiltersWithDebounce, logDebug]);
-  
-  // Handle location selection changes
-  const handleLocationChange = useCallback((location) => {
-    logDebug('Location changed', location);
-    setSelectedLocation(location);
-    // Reset region selection when location is selected
-    if (location) {
-      setSelectedRegion(null);
-    }
+  // Handler for search query changes
+  const handleSearchQueryChange = useCallback((query) => {
+    logDebug('Search query changed', query);
+    setSearchQuery(query);
   }, [logDebug]);
 
-  // Handle region selection changes
+  // Handler for year filter changes
+  const handleYearChange = useCallback((year) => {
+    logDebug('Year filter changed', year);
+    setFilterYear(year);
+  }, [logDebug]);
+
+  // Handler for region selection changes
   const handleRegionChange = useCallback((region) => {
     logDebug('Region changed', region);
     setSelectedRegion(region);
@@ -199,11 +146,93 @@ export default function ClientPage() {
     }
   }, [logDebug]);
 
-  // Handler for search query changes
-  const handleSearchQueryChange = useCallback((query) => {
-    logDebug('Search query changed', query);
-    setSearchQuery(query);
+  // Handler for location selection changes
+  const handleLocationChange = useCallback((location) => {
+    logDebug('Location changed', location);
+    setSelectedLocation(location);
+    // Reset region selection when location is selected
+    if (location) {
+      setSelectedRegion(null);
+    }
   }, [logDebug]);
+
+  // Effect to trigger data load when search, year, region, or location changes
+  useEffect(() => {
+    // Skip if we're syncing from context to avoid loops
+    if (syncingFromContextRef.current) return;
+    
+    // Log that we're about to trigger data load
+    logDebug('Local filter state changed, preparing to sync', {
+      searchQuery,
+      filterYear,
+      selectedRegion,
+      selectedLocation
+    });
+    
+    // If updateFilters is available, use it to update global state
+    if (typeof updateFilters === 'function') {
+      // Using startTransition to avoid UI freezes
+      startTransition(() => {
+        // Build filters object based on current UI state
+        const newFilters: any = {};
+        
+        // Add search query if provided
+        if (searchQuery) {
+          newFilters.searchQuery = searchQuery;
+        }
+        
+        // Add filter year
+        if (filterYear) {
+          newFilters.year = parseInt(filterYear);
+        }
+        
+        // Add location or region filters
+        if (selectedLocation) {
+          newFilters.regionId = selectedLocation.id;
+          newFilters.provinsi = selectedLocation.provinsi;
+          newFilters.daerahTingkat = selectedLocation.type || null;
+          
+          // Extract kotaKab from name by removing type prefix
+          const kotaKab = selectedLocation.type 
+            ? selectedLocation.name.replace(selectedLocation.type, '').trim() 
+            : selectedLocation.name;
+            
+          newFilters.kotaKab = kotaKab;
+        } else if (selectedRegion && selectedRegion.id !== 'all') {
+          newFilters.regionId = selectedRegion.id;
+          
+          if (selectedRegion.id.startsWith('province-')) {
+            newFilters.provinsi = selectedRegion.name;
+            // Clear district filters
+            newFilters.daerahTingkat = null;
+            newFilters.kotaKab = null;
+          } else if (selectedRegion.id.startsWith('region-')) {
+            newFilters.provinsi = selectedRegion.provinsi;
+            newFilters.daerahTingkat = selectedRegion.type;
+            
+            // Extract kotaKab from name
+            const kotaKab = selectedRegion.type 
+              ? selectedRegion.name.replace(selectedRegion.type, '').trim() 
+              : selectedRegion.name;
+              
+            newFilters.kotaKab = kotaKab;
+          }
+        } else if (selectedRegion && selectedRegion.id === 'all') {
+          // Clear all region filters if "all" is selected
+          newFilters.regionId = null;
+          newFilters.provinsi = null;
+          newFilters.daerahTingkat = null;
+          newFilters.kotaKab = null;
+        }
+        
+        // Only update if we have actual filter values
+        if (Object.keys(newFilters).length > 0) {
+          logDebug('Updating global filters', newFilters);
+          updateFilters(newFilters);
+        }
+      });
+    }
+  }, [searchQuery, filterYear, selectedRegion, selectedLocation, updateFilters, logDebug]);
 
   // Show error state if DataContext reported an error
   if (error && error.dashboard) {
@@ -230,8 +259,7 @@ export default function ClientPage() {
       <DashboardHeader />
       
       <SummaryCards 
-        data={dashboardStats} 
-        isLoading={loading.dashboard || loading.stats || isPending}
+        useDataContext={true}
       />
       
       <SecondarySection 
@@ -239,31 +267,22 @@ export default function ClientPage() {
       />
       
       <FilterBar
-  searchQuery={searchQuery}
-  setSearchQuery={handleSearchQueryChange}
-  filterYear={filterYear}
-  setFilterYear={setFilterYear}
-  selectedRegion={selectedRegion}
-  setSelectedRegion={handleRegionChange}
-  selectedLocation={selectedLocation}
-  setSelectedLocation={handleLocationChange}
-  updateFilters={updateFilters} // Add this line to pass the function
-/>
-
+        searchQuery={searchQuery}
+        setSearchQuery={handleSearchQueryChange}
+        filterYear={filterYear}
+        setFilterYear={handleYearChange}
+        selectedRegion={selectedRegion}
+        setSelectedRegion={handleRegionChange}
+        selectedLocation={selectedLocation}
+        setSelectedLocation={handleLocationChange}
+      />
       
       <ChartsSection 
-        pieData={chartData.pie}
-        barData={chartData.bar}
-        isLoading={loading.dashboard || loading.charts || isPending}
+        useDataContext={true}
       />
       
       <TableSection 
         useDataContext={true}
-        // For backward compatibility
-        searchQuery={searchQuery} 
-        filterYear={filterYear}
-        selectedRegion={selectedRegion}
-        selectedLocation={selectedLocation}
       />
       
       <DashboardFooter />

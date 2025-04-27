@@ -1,4 +1,4 @@
-// src/app/context/DataContext.js - Anti-Loop Version
+// src/app/context/DataContext.js - Versi lengkap dengan perbaikan
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -7,11 +7,16 @@ import {
   getChartData, 
   getFilteredPackages, 
   getRegionsList,
-  getPackageCount  // Import the count function
+  getPackageCount,
+  getAccurateTotalCount
 } from '@/app/apiService';
 
 // Create context
 const DataContext = createContext(null);
+
+// Constants for pagination strategy
+const ITEMS_PER_PAGE = 10;  // Items shown per page in UI
+const ITEMS_PER_BATCH = 50; // Items fetched per API request
 
 // Custom hook to use the data context
 export function useData() {
@@ -23,6 +28,7 @@ export function useData() {
       dashboardStats: {},
       chartData: { pie: [], bar: [] },
       tableData: [],
+      tableBatchData: [],
       totalItems: 0,
       regions: [],
       filters: {},
@@ -36,7 +42,10 @@ export function useData() {
       },
       // Provide no-op functions
       updateFilters: () => {},
-      fetchAllDashboardData: () => Promise.resolve()
+      fetchAllDashboardData: () => Promise.resolve(),
+      fetchTableData: () => Promise.resolve(),
+      handlePageChange: () => {},
+      fetchTotalItemCount: () => Promise.resolve()
     };
   }
   return context;
@@ -49,11 +58,15 @@ export function DataProvider({ children }) {
   const lastFetchTimeRef = useRef(0);
   const pendingFetchRef = useRef(null);
   const dataFetchedRef = useRef(false);
+  const filterUpdateTimeoutRef = useRef(null);
+  const previousFilterRef = useRef({});
+  const currentBatchRef = useRef(1);
+  const updatingFiltersRef = useRef(false);
   
   // Debug logger
   const logDebug = useCallback((message, data) => {
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[DataContext] ${message}`, data);
+      console.log(`[DataContext] ${message}`, data !== null ? data : '');
     }
   }, []);
   
@@ -72,13 +85,15 @@ export function DataProvider({ children }) {
       bar: []
     },
     table: {
-      data: [],
-      totalItems: 0
+      data: [], // Data for current page (10 items)
+      batchData: [], // All fetched data in batches (multiples of 50)
+      totalItems: 0,  // Total items in the entire dataset
+      currentBatch: 1 // Current batch number
     },
     regions: [],
   });
   
-  // Global filters state
+  // Global filters state with default Jakarta Selatan
   const [filters, setFilters] = useState({
     searchQuery: '',
     year: '2025',
@@ -91,7 +106,8 @@ export function DataProvider({ children }) {
     metode: null,
     jenisPengadaan: null,
     page: 1,
-    limit: 10
+    batchSize: ITEMS_PER_BATCH, // Items per API request
+    limit: ITEMS_PER_PAGE       // Items per page
   });
 
   // Loading state
@@ -107,7 +123,8 @@ export function DataProvider({ children }) {
   // Error state
   const [error, setError] = useState({
     dashboard: null,
-    regions: null
+    regions: null,
+    table: null
   });
 
   // Load regions on initial render - only once
@@ -138,7 +155,7 @@ export function DataProvider({ children }) {
         console.error('Error loading regions:', error);
         setError(prev => ({ ...prev, regions: error.message }));
         
-        // Set empty regions instead of dummy data
+        // Set empty regions with "all" option
         setDashboardData(prev => ({
           ...prev,
           regions: [{ id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 }]
@@ -150,51 +167,6 @@ export function DataProvider({ children }) {
     
     loadRegions();
   }, [logDebug]); // Empty dependency array so it only runs once
-
-  // Helper function to fetch dashboard stats
-  const fetchDashboardStats = useCallback(async (currentFilters = null) => {
-    const filtersToUse = currentFilters || filters;
-    
-    try {
-      const stats = await getDashboardStats(filtersToUse);
-      
-      // Update state with fetched data
-      setDashboardData(prev => ({
-        ...prev,
-        stats
-      }));
-      
-      return stats;
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-      // Don't change the current stats on error
-      return dashboardData.stats;
-    }
-  }, [filters, dashboardData.stats]);
-
-  // Helper function to fetch chart data
-  const fetchChartData = useCallback(async (chartType, currentFilters = null) => {
-    const filtersToUse = currentFilters || filters;
-    
-    try {
-      const data = await getChartData(chartType, filtersToUse);
-      
-      // Update state with fetched data
-      setDashboardData(prev => ({
-        ...prev,
-        charts: {
-          ...prev.charts,
-          [chartType]: data
-        }
-      }));
-      
-      return data;
-    } catch (error) {
-      console.error(`Error fetching ${chartType} chart:`, error);
-      // Return current chart data on error
-      return dashboardData.charts[chartType];
-    }
-  }, [filters, dashboardData.charts]);
 
   // Format wilayah from item data
   const formatWilayah = useCallback((item) => {
@@ -224,53 +196,34 @@ export function DataProvider({ children }) {
     return 'Sesuai';
   }, []);
 
-  // Calculate total items for pagination
-  const calculateTotalItems = useCallback((data, page, limit, currentTotal) => {
-    // If the API directly provides a total count
-    if (data.totalCount !== undefined) {
-      return data.totalCount;
-    }
-    
-    // Calculate based on the data we have
-    if (!Array.isArray(data)) {
-      return currentTotal || 0;
-    }
-    
-    // Case 1: If this is the first page and we got fewer items than the limit,
-    // then this is the exact total
-    if (page === 1 && data.length < limit) {
-      return data.length;
-    }
-    
-    // Case 2: If we have a full page of data, we know there are at least
-    // this many items (current page * limit), possibly more
-    if (data.length >= limit) {
-      // Ensure our total count is at least the items we've seen plus one more page
-      return Math.max(currentTotal || 0, page * limit + 1);
-    }
-    
-    // Case 3: If we have a partial page (not the first page), we can calculate exactly
-    if (data.length < limit && page > 1) {
-      return (page - 1) * limit + data.length;
-    }
-    
-    // Default: Keep the current total if higher, or calculate based on what we know
-    return Math.max(currentTotal || 0, page * limit);
-  }, []);
-  
   // Function to fetch just the total count of items
   const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
     const filtersToUse = currentFilters || filters;
     
     try {
-      logDebug('Fetching total item count for all records', filtersToUse);
+      logDebug('Fetching total item count for current filters', filtersToUse);
       
-      // Using the imported getPackageCount function
-      const totalCount = await getPackageCount(filtersToUse);
+      // Extract just the filter parameters (tanpa pagination)
+      const filterOnlyParams = {
+        searchQuery: filtersToUse.searchQuery,
+        year: filtersToUse.year,
+        regionId: filtersToUse.regionId,
+        provinsi: filtersToUse.provinsi,
+        daerahTingkat: filtersToUse.daerahTingkat,
+        kotaKab: filtersToUse.kotaKab,
+        minPagu: filtersToUse.minPagu,
+        maxPagu: filtersToUse.maxPagu,
+        metode: filtersToUse.metode,
+        jenisPengadaan: filtersToUse.jenisPengadaan,
+        countOnly: true
+      };
+      
+      // Using the imported getPackageCount function with explicit filter parameters
+      const totalCount = await getPackageCount(filterOnlyParams);
       
       logDebug('API returned total count', totalCount);
       
-      // Update dashboard data with the exact total count
+      // Update dashboard data with the exact total count - PENTING: Pastikan ini selalu diperbarui
       setDashboardData(prev => ({
         ...prev,
         table: {
@@ -283,9 +236,8 @@ export function DataProvider({ children }) {
     } catch (error) {
       console.error('Error fetching total item count:', error);
       
-      // On error, use a high default value rather than the current count
-      // This ensures pagination works even if we can't get the exact count
-      const fallbackCount = 1500;
+      // Pada error, gunakan nilai yang lebih moderat (bukan 1500 yang terlalu tinggi)
+      const fallbackCount = 100;
       
       setDashboardData(prev => ({
         ...prev,
@@ -299,88 +251,327 @@ export function DataProvider({ children }) {
     }
   }, [filters, logDebug]);
 
-  // Enhanced function to fetch table data with better pagination handling
-  const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
+  // Specialized function to get accurate count, suitable for dashboard
+  const getAccurateCount = useCallback(async (currentFilters = null) => {
     const filtersToUse = currentFilters || filters;
     
-    // Make sure we use the provided page and limit
-    const tableFilters = {
-      ...filtersToUse,
-      page,
-      limit
-    };
-    
     try {
-      setLoadingState(prev => ({ ...prev, table: true }));
+      // Gunakan fungsi khusus untuk mendapatkan count yang lebih akurat
+      const count = await getAccurateTotalCount(filtersToUse);
+      logDebug('Got accurate count:', count);
       
-      // Log pagination request for debugging
-      logDebug('Fetching table data with pagination:', { page, limit, filters: tableFilters });
-      
-      const data = await getFilteredPackages(tableFilters);
-      
-      // Process table data
-      const processedData = data.map((item, index) => ({
-        no: (page - 1) * limit + index + 1,
-        nama: item.paket || '',
-        satuan: item.satuan_kerja || '',
-        krema: item.metode || '',
-        jadwal: item.pemilihan || 'Belum ditentukan',
-        wilayah: formatWilayah(item),
-        status: determineStatus(item),
-        keterangan: item.jenis_pengadaan || ''
+      // Update dashboard data dengan count yang akurat
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          totalItems: count
+        }
       }));
       
-      // Calculate total items based on API response
-      const hasFullPage = data.length >= limit;
-      const newTotalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
-      
-      logDebug('Table data received:', { 
-        count: data.length, 
-        hasFullPage, 
-        page, 
-        limit,
-        estimatedTotal: newTotalItems
-      });
+      return count;
+    } catch (error) {
+      console.error('Error getting accurate count:', error);
+      return dashboardData.table.totalItems; // Return existing value on error
+    }
+  }, [filters, dashboardData.table.totalItems, logDebug]);
+
+  // Helper function to fetch dashboard stats
+  const fetchDashboardStats = useCallback(async (currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    logDebug('Fetching dashboard stats', filtersToUse);
+    
+    try {
+      setLoadingState(prev => ({ ...prev, stats: true }));
+      const stats = await getDashboardStats(filtersToUse);
       
       // Update state with fetched data
       setDashboardData(prev => ({
         ...prev,
-        table: {
-          data: processedData,
-          totalItems: newTotalItems,
-          hasFullPage
+        stats
+      }));
+      
+      setError(prev => ({ ...prev, dashboard: null }));
+      return stats;
+    } catch (error) {
+      console.error('Error fetching stats:', error);
+      setError(prev => ({ ...prev, dashboard: `Error fetching stats: ${error.message}` }));
+      // Don't change the current stats on error
+      return dashboardData.stats;
+    } finally {
+      setLoadingState(prev => ({ ...prev, stats: false }));
+    }
+  }, [filters, dashboardData.stats, logDebug]);
+
+  // Helper function to fetch chart data
+  const fetchChartData = useCallback(async (chartType, currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    logDebug(`Fetching ${chartType} chart data`, filtersToUse);
+    
+    try {
+      setLoadingState(prev => ({ ...prev, charts: true }));
+      const data = await getChartData(chartType, filtersToUse);
+      
+      // Update state with fetched data
+      setDashboardData(prev => ({
+        ...prev,
+        charts: {
+          ...prev.charts,
+          [chartType]: data
         }
       }));
       
-      return processedData;
+      setError(prev => ({ ...prev, dashboard: null }));
+      return data;
     } catch (error) {
-      console.error('Error fetching table data:', error);
-      // Keep current table data on error
-      return dashboardData.table.data;
+      console.error(`Error fetching ${chartType} chart:`, error);
+      setError(prev => ({ ...prev, dashboard: `Error fetching chart: ${error.message}` }));
+      // Return current chart data on error
+      return dashboardData.charts[chartType];
     } finally {
-      setLoadingState(prev => ({ ...prev, table: false }));
+      setLoadingState(prev => ({ ...prev, charts: false }));
     }
-  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, getFilteredPackages, logDebug]);
+  }, [filters, dashboardData.charts, logDebug]);
 
-  // Single function to fetch all dashboard data in one go
-  // With debounce and loop prevention
+  // Extract page data from a batch of data - PENTING: Definisikan ini SEBELUM fungsi yang menggunakannya
+  const extractPageFromBatch = useCallback((batchData, page, batch) => {
+    if (!batchData || batchData.length === 0) return [];
+    
+    // Calculate the start index within the batch
+    const batchStartIndex = (batch - 1) * ITEMS_PER_BATCH;
+    const globalStartIndex = (page - 1) * ITEMS_PER_PAGE;
+    const relativeStartIndex = globalStartIndex - batchStartIndex;
+    
+    logDebug('Extracting page from batch', {
+      page,
+      batch,
+      batchStartIndex,
+      globalStartIndex,
+      relativeStartIndex,
+      batchLength: batchData.length
+    });
+    
+    // Safety check to prevent going out of bounds
+    if (relativeStartIndex < 0) {
+      console.error('Invalid relative start index:', relativeStartIndex);
+      return batchData.slice(0, ITEMS_PER_PAGE);
+    }
+    
+    if (relativeStartIndex >= batchData.length) {
+      console.error('Relative start index exceeds batch length:', relativeStartIndex, batchData.length);
+      return [];
+    }
+    
+    // Extract the page data
+    return batchData.slice(relativeStartIndex, relativeStartIndex + ITEMS_PER_PAGE);
+  }, [logDebug]);
+
+  // Process raw data from API into UI-ready format
+  const processTableData = useCallback((data, startIndex = 0) => {
+    return data.map((item, index) => ({
+      no: startIndex + index + 1,
+      nama: item.paket || '',
+      satuan: item.satuan_kerja || '',
+      krema: item.metode || '',
+      jadwal: item.pemilihan || 'Belum ditentukan',
+      wilayah: formatWilayah(item),
+      status: determineStatus(item),
+      keterangan: item.jenis_pengadaan || '',
+      // Keep original data for reference
+      rawData: item
+    }));
+  }, [formatWilayah, determineStatus]);
+
+  // Calculate which batch contains the requested page
+  const getBatchForPage = useCallback((page) => {
+    return Math.ceil(page * ITEMS_PER_PAGE / ITEMS_PER_BATCH);
+  }, []);
+
+  // Enhanced function to fetch table data with batching strategy
+  const fetchTableData = useCallback(async (page = 1, limit = ITEMS_PER_PAGE, currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    const batchSize = ITEMS_PER_BATCH;
+    
+    // Calculate which batch contains this page
+    const targetBatch = getBatchForPage(page);
+    logDebug(`Page ${page} requires batch ${targetBatch}, current batch is ${currentBatchRef.current}`);
+    
+    // PENTING: Selalu update total count terlebih dahulu untuk tampilan jumlah yang akurat
+    let totalItems = dashboardData.table.totalItems;
+    try {
+      totalItems = await fetchTotalItemCount(filtersToUse);
+      logDebug('Updated total count:', totalItems);
+    } catch (err) {
+      console.error('Error fetching total count:', err);
+      // Tetap gunakan nilai sebelumnya jika gagal
+    }
+    
+    // Check if we need to fetch a new batch
+    if (targetBatch !== currentBatchRef.current || dashboardData.table.batchData.length === 0) {
+      try {
+        setLoadingState(prev => ({ ...prev, table: true }));
+        
+        // Calculate API parameters for batch request
+        const skip = (targetBatch - 1) * batchSize;
+        
+        // Prepare API request
+        const batchFilters = {
+          ...filtersToUse,
+          skip,
+          limit: batchSize
+        };
+        
+        logDebug('Fetching table data batch:', { 
+          batch: targetBatch, 
+          skip,
+          limit: batchSize,
+          filters: batchFilters
+        });
+        
+        const data = await getFilteredPackages(batchFilters);
+        
+        if (!Array.isArray(data)) {
+          console.error('API returned non-array data:', data);
+          throw new Error('Invalid data format returned from API');
+        }
+        
+        // Process the entire batch data
+        const processedBatchData = processTableData(data, skip);
+        
+        // Extract totalCount from API response if available
+        // Prioritas tinggi: gunakan nilai dari respons API jika tersedia
+        if (data.totalCount !== undefined) {
+          totalItems = data.totalCount;
+          logDebug('Using totalCount from API response:', totalItems);
+        }
+        
+        // Calculate if we have a full batch
+        const hasFullBatch = data.length >= batchSize;
+        
+        logDebug('Batch data received:', { 
+          batch: targetBatch,
+          count: data.length, 
+          hasFullBatch,
+          totalItems
+        });
+        
+        // Update current batch reference
+        currentBatchRef.current = targetBatch;
+        
+        // Update state with fetched batch data and ACCURATE total items
+        setDashboardData(prev => ({
+          ...prev,
+          table: {
+            ...prev.table,
+            batchData: processedBatchData,
+            totalItems: totalItems, // Gunakan nilai yang baru dihitung
+            currentBatch: targetBatch
+          }
+        }));
+        
+        // Now extract the page data from the batch
+        const pageData = extractPageFromBatch(processedBatchData, page, targetBatch);
+        
+        // Update state with page data
+        setDashboardData(prev => ({
+          ...prev,
+          table: {
+            ...prev.table,
+            data: pageData
+          }
+        }));
+        
+        setError(prev => ({ ...prev, table: null }));
+        return pageData;
+      } catch (error) {
+        console.error('Error fetching table data:', error);
+        setError(prev => ({ ...prev, table: `Error fetching data: ${error.message}` }));
+        // Keep current data on error
+        return dashboardData.table.data;
+      } finally {
+        setLoadingState(prev => ({ ...prev, table: false }));
+      }
+    } else {
+      // Tetap update totalItems meskipun menggunakan batch yang ada
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          totalItems: totalItems
+        }
+      }));
+      
+      // We already have the batch data, just extract the page
+      logDebug('Using existing batch data for page', page);
+      const pageData = extractPageFromBatch(dashboardData.table.batchData, page, targetBatch);
+      
+      // Update state with just the page data
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          data: pageData
+        }
+      }));
+      
+      return pageData;
+    }
+  }, [filters, dashboardData.table, processTableData, getBatchForPage, extractPageFromBatch, fetchTotalItemCount, logDebug]);
+
+  // Handler for page changes
+  const handlePageChange = useCallback((newPage) => {
+    logDebug(`Page change requested: ${newPage}`);
+    
+    // Update filters with new page
+    const updatedFilters = {
+      ...filters,
+      page: newPage
+    };
+    
+    // Update filters state
+    setFilters(updatedFilters);
+    
+    // Calculate which batch contains this page
+    const targetBatch = getBatchForPage(newPage);
+    const currentBatch = currentBatchRef.current;
+    
+    if (targetBatch !== currentBatch || dashboardData.table.batchData.length === 0) {
+      // Need to fetch new batch
+      logDebug(`Fetching new batch ${targetBatch} for page ${newPage}`);
+      fetchTableData(newPage, ITEMS_PER_PAGE, updatedFilters);
+    } else {
+      // Just extract page from existing batch
+      logDebug(`Using existing batch ${currentBatch} for page ${newPage}`);
+      const pageData = extractPageFromBatch(dashboardData.table.batchData, newPage, currentBatch);
+      
+      // Update only the page data
+      setDashboardData(prev => ({
+        ...prev,
+        table: {
+          ...prev.table,
+          data: pageData
+        }
+      }));
+    }
+    
+    return newPage;
+  }, [filters, dashboardData.table.batchData, getBatchForPage, fetchTableData, extractPageFromBatch, logDebug]);
+
+  // Function to fetch all dashboard data in one go with debounce and loop prevention
   const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
     // Use current filters if not provided
     const filtersToUse = currentFilters || filters;
     
     // Check if there's already a fetch in progress
     if (pendingFetchRef.current) {
-      logDebug('Fetch already in progress, skipping', { filters: filtersToUse });
+      logDebug('Fetch already in progress, skipping');
       return null;
     }
     
     // Debounce fetches - don't fetch more often than every 500ms
     const now = Date.now();
     if (now - lastFetchTimeRef.current < 500) {
-      logDebug('Debouncing fetch, too soon since last fetch', {
-        timeSinceLast: now - lastFetchTimeRef.current,
-        filters: filtersToUse
-      });
+      logDebug('Debouncing fetch, too soon since last fetch');
       return null;
     }
     
@@ -388,6 +579,18 @@ export function DataProvider({ children }) {
     pendingFetchRef.current = (async () => {
       logDebug('Starting fetch all dashboard data', { filters: filtersToUse });
       lastFetchTimeRef.current = now;
+      
+      // Reset the current page to 1 and batch to 1
+      const pageOneFilters = {
+        ...filtersToUse,
+        page: 1
+      };
+      
+      // Update filters to ensure page 1
+      setFilters(pageOneFilters);
+      
+      // Reset batch reference
+      currentBatchRef.current = 1;
       
       // Set loading state
       setLoadingState(prev => ({ 
@@ -399,15 +602,25 @@ export function DataProvider({ children }) {
       }));
       
       try {
-        // First fetch the total count to ensure accurate pagination
-        await fetchTotalItemCount(filtersToUse);
+        // CRITICAL: First fetch the total count for accurate pagination
+        // This MUST be awaited and completed first
+        const totalCount = await fetchTotalItemCount(pageOneFilters);
+        logDebug('Total count fetched:', totalCount);
         
-        // Then fetch all other data in parallel to reduce overall loading time
+        // Try to get a more accurate count
+        try {
+          const accurateCount = await getAccurateCount(pageOneFilters);
+          logDebug('Accurate count fetched:', accurateCount);
+        } catch (err) {
+          console.error('Error getting accurate count:', err);
+        }
+        
+        // Then fetch all other data in parallel
         const [stats, pieData, barData, tableData] = await Promise.all([
-          fetchDashboardStats(filtersToUse),
-          fetchChartData('pie', filtersToUse),
-          fetchChartData('bar', filtersToUse),
-          fetchTableData(filtersToUse.page, filtersToUse.limit, filtersToUse)
+          fetchDashboardStats(pageOneFilters),
+          fetchChartData('pie', pageOneFilters),
+          fetchChartData('bar', pageOneFilters),
+          fetchTableData(1, ITEMS_PER_PAGE, pageOneFilters)
         ]);
         
         dataFetchedRef.current = true;
@@ -415,10 +628,10 @@ export function DataProvider({ children }) {
         // Success - error will be null
         setError(prev => ({ ...prev, dashboard: null }));
         
-        return { stats, pieData, barData, tableData };
+        return { stats, pieData, barData, tableData, totalCount };
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
-        setError(prev => ({ ...prev, dashboard: error.message }));
+        setError(prev => ({ ...prev, dashboard: `Error loading dashboard: ${error.message}` }));
         return null;
       } finally {
         setLoadingState(prev => ({ 
@@ -434,73 +647,121 @@ export function DataProvider({ children }) {
     })();
     
     return pendingFetchRef.current;
-  }, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
+  }, [filters, fetchTotalItemCount, getAccurateCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
 
+  // Compare two filter objects and determine if they're different
+  const areFiltersChanged = useCallback((oldFilters, newFilters) => {
+    // If the objects are the same instance, no change
+    if (oldFilters === newFilters) return false;
+    
+    // Check if either is null/undefined when the other isn't
+    if (!oldFilters || !newFilters) return true;
+    
+    // Get all keys from both objects
+    const allKeys = [...new Set([...Object.keys(oldFilters), ...Object.keys(newFilters)])];
+    
+    // Compare values for each key
+    for (const key of allKeys) {
+      const oldValue = oldFilters[key];
+      const newValue = newFilters[key];
+      
+      // Handle different types differently
+      if (typeof oldValue !== typeof newValue) return true;
+      
+      // Special handling for objects and arrays
+      if (typeof oldValue === 'object' && oldValue !== null && newValue !== null) {
+        if (JSON.stringify(oldValue) !== JSON.stringify(newValue)) return true;
+      } 
+      // Standard value comparison for primitives
+      else if (oldValue !== newValue) {
+        return true;
+      }
+    }
+    
+    // If we got here, no differences found
+    return false;
+  }, []);
+
+  // Improved updateFilters function with better state management
   const updateFilters = useCallback((newFilters) => {
-    // Debug log
+    // Log for debugging
     logDebug('updateFilters called with', newFilters);
     
-    // Check if the new filters are actually different from current filters
-    let hasChanged = false;
-    let hasChangedPageOnly = false;
-    const updatedFilters = { ...filters };
+    // Set flag to prevent loops
+    updatingFiltersRef.current = true;
     
-    // Check each key for actual changes
-    Object.keys(newFilters).forEach(key => {
-      // Special handling for objects and arrays
-      if (typeof newFilters[key] === 'object' && newFilters[key] !== null) {
-        if (JSON.stringify(newFilters[key]) !== JSON.stringify(filters[key])) {
-          updatedFilters[key] = newFilters[key];
-          hasChanged = true;
-          if (key !== 'page') hasChangedPageOnly = false;
-        }
-      } 
-      // Standard value comparison
-      else if (newFilters[key] !== filters[key]) {
-        updatedFilters[key] = newFilters[key];
-        hasChanged = true;
-        // If searchQuery changed, mark as significant change
-        if (key === 'searchQuery' || key === 'regionId' || key === 'provinsi' || 
-            key === 'daerahTingkat' || key === 'kotaKab') {
-          hasChangedPageOnly = false;
-        } else if (key === 'page' && Object.keys(newFilters).length === 1) {
-          hasChangedPageOnly = true;
-        }
-      }
-    });
-    
-    // If nothing has changed, don't update state or trigger new fetch
-    if (!hasChanged) {
-      logDebug('No filter changes detected, skipping update');
-      return filters;
+    // Clear any pending timeout
+    if (filterUpdateTimeoutRef.current) {
+      clearTimeout(filterUpdateTimeoutRef.current);
     }
     
-    // Reset to page 1 if anything other than page changes
-    if (hasChanged && !hasChangedPageOnly && newFilters.page === undefined) {
+    // Create combined filters
+    const updatedFilters = { ...filters, ...newFilters };
+    
+    // Check if the filters actually changed
+    if (!areFiltersChanged(previousFilterRef.current, updatedFilters)) {
+      logDebug('Filters unchanged, skipping update');
+      updatingFiltersRef.current = false;
+      return filters; // Return current filters
+    }
+    
+    // Special case: check if this is only a page change
+    const isOnlyPageChange = 
+      Object.keys(newFilters).length === 1 && 
+      newFilters.page !== undefined && 
+      newFilters.page !== filters.page;
+    
+    // If filters other than page changed, reset to page 1
+    if (!isOnlyPageChange && Object.keys(newFilters).some(key => key !== 'page' && filters[key] !== newFilters[key])) {
       updatedFilters.page = 1;
+      // Reset batch reference for new filters
+      currentBatchRef.current = 1;
     }
     
-    // Update filters state
+    // Update our previous filter reference
+    previousFilterRef.current = { ...updatedFilters };
+    
+    // Update filters state immediately
     setFilters(updatedFilters);
     
-    // Schedule fetch for next tick to avoid potential loops
-    setTimeout(() => {
-      // If only the page changed, just fetch the table data for that page
-      if (hasChangedPageOnly) {
-        // Use the page from newFilters, fallback to current page
-        const pageToFetch = newFilters.page || filters.page || 1;
-        const limitToUse = filters.limit || 10;
-        
-        fetchTableData(pageToFetch, limitToUse, updatedFilters);
+    // Schedule data fetching with debounce
+    filterUpdateTimeoutRef.current = setTimeout(() => {
+      if (isOnlyPageChange) {
+        // For page changes, use handlePageChange
+        handlePageChange(newFilters.page);
       } else {
-        // Other filters changed, fetch all data
+        // For other changes, update all dashboard data
         fetchAllDashboardData(updatedFilters);
       }
-    }, 0);
+      
+      // Reset the updating flag after a short delay
+      setTimeout(() => {
+        updatingFiltersRef.current = false;
+      }, 100);
+    }, 100); // Short debounce for responsiveness
     
     return updatedFilters;
-  }, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
-  
+  }, [filters, areFiltersChanged, handlePageChange, fetchAllDashboardData, logDebug]);
+
+  // Effect untuk memastikan totalCount selalu diperbarui saat filter berubah
+  useEffect(() => {
+    // Skip if initial render or if we're updating filters
+    if (!dataFetchedRef.current || updatingFiltersRef.current) return;
+    
+    // Function to update total count
+    const updateTotalCount = async () => {
+      try {
+        const count = await getAccurateCount(filters);
+        logDebug('Direct total count update:', count);
+      } catch (error) {
+        console.error('Error updating total count:', error);
+      }
+    };
+    
+    // Execute with short delay to avoid race conditions
+    const timeoutId = setTimeout(updateTotalCount, 100);
+    return () => clearTimeout(timeoutId);
+  }, [filters, getAccurateCount, logDebug]);
 
   // Initial data loading (only once)
   useEffect(() => {
@@ -517,8 +778,14 @@ export function DataProvider({ children }) {
     dashboardStats: dashboardData.stats,
     chartData: dashboardData.charts,
     tableData: dashboardData.table.data,
+    tableBatchData: dashboardData.table.batchData,
     totalItems: dashboardData.table.totalItems,
+    currentBatch: dashboardData.table.currentBatch,
     regions: dashboardData.regions,
+    
+    // Pagination constants
+    ITEMS_PER_PAGE,
+    ITEMS_PER_BATCH,
     
     // Filters
     filters,
@@ -539,12 +806,14 @@ export function DataProvider({ children }) {
     // Functions
     updateFilters,
     fetchAllDashboardData,
-    fetchTotalItemCount, // Add this new function
+    fetchTotalItemCount,
+    fetchTableData,
+    handlePageChange,
+    getAccurateCount,
     
     // Individual data fetching functions for compatibility
     fetchDashboardStats,
-    fetchChartData,
-    fetchTableData
+    fetchChartData
   }), [
     dashboardData, 
     filters, 
@@ -552,10 +821,14 @@ export function DataProvider({ children }) {
     error,
     updateFilters,
     fetchAllDashboardData,
-    fetchTotalItemCount, // Include in dependency array
+    fetchTotalItemCount,
+    fetchTableData,
+    handlePageChange,
+    getAccurateCount,
     fetchDashboardStats,
     fetchChartData,
-    fetchTableData
+    ITEMS_PER_PAGE,
+    ITEMS_PER_BATCH
   ]);
   
   return <DataContext.Provider value={contextValue}>{children}</DataContext.Provider>;

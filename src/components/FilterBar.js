@@ -1,4 +1,4 @@
-// Fixed FilterBar.js search implementation
+// Improved FilterBar.js with better search and filter integration
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Filter, Download, ChevronDown } from 'lucide-react';
@@ -16,16 +16,22 @@ export default function FilterBar({
   selectedLocation,
   setSelectedLocation
 }) {
-  // Get updateFilters directly from DataContext to ensure we can update global state
-  const { updateFilters } = useData();
+  // Get updateFilters and filters directly from DataContext for centralized state management
+  const { updateFilters, filters, fetchAllDashboardData } = useData();
   
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
   const debounceTimerRef = useRef(null);
   const years = ['2021', '2022', '2023', '2024', '2025'];
   
+  // Sync local state with global filters initially and when global filters change
+  useEffect(() => {
+    if (filters?.searchQuery !== undefined && filters.searchQuery !== localSearchQuery) {
+      setLocalSearchQuery(filters.searchQuery);
+    }
+  }, [filters]);
+  
   // Debounce search query to prevent excessive API calls
-  // AND ensure it updates the global filters
   useEffect(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -34,11 +40,16 @@ export default function FilterBar({
     debounceTimerRef.current = setTimeout(() => {
       if (localSearchQuery !== searchQuery) {
         // Update the parent's state via prop
-        setSearchQuery(localSearchQuery);
+        if (setSearchQuery) {
+          setSearchQuery(localSearchQuery);
+        }
         
-        // IMPORTANT ADDITION: Update global filters for search
+        // Update global filters for search
         if (updateFilters) {
-          updateFilters({ searchQuery: localSearchQuery });
+          updateFilters({ 
+            searchQuery: localSearchQuery,
+            page: 1 // Reset to page 1 when search changes
+          });
         }
       }
     }, 500); // Wait 500ms after user stops typing
@@ -50,49 +61,62 @@ export default function FilterBar({
     };
   }, [localSearchQuery, searchQuery, setSearchQuery, updateFilters]);
   
-  // When searchQuery prop changes (from parent), update local state
-  useEffect(() => {
-    setLocalSearchQuery(searchQuery);
-  }, [searchQuery]);
-  
-  // Callbacks for location and region selection
-  // Modified to update global filters directly
+  // Callbacks for location and region selection with central state management
   const handleLocationSelect = useCallback((location) => {
-    setSelectedLocation(location);
-    
-    // Update filters directly when location changes
-    if (updateFilters && location) {
-      updateFilters({
-        regionId: location.id,
-        provinsi: location.provinsi,
-        daerahTingkat: location.type || null,
-        kotaKab: location.name && location.type ? 
-                 location.name.replace(location.type, '').trim() : 
-                 location.name
-      });
-    } else if (updateFilters && !location) {
-      // Reset location filters if location is cleared
-      updateFilters({
-        regionId: null,
-        daerahTingkat: null,
-        kotaKab: null
-      });
+    // Update local state
+    if (setSelectedLocation) {
+      setSelectedLocation(location);
     }
     
     // Reset region selection when location is selected
-    if (location) {
+    if (location && setSelectedRegion) {
       setSelectedRegion(null);
+    }
+    
+    // Update filters directly when location changes
+    if (updateFilters) {
+      if (location) {
+        const filterUpdates = {
+          regionId: location.id,
+          provinsi: location.provinsi,
+          daerahTingkat: location.type || null,
+          kotaKab: location.name && location.type ? 
+                  location.name.replace(location.type, '').trim() : 
+                  location.name,
+          page: 1 // Reset to page 1 when location changes
+        };
+        updateFilters(filterUpdates);
+      } else {
+        // Reset location filters if location is cleared
+        updateFilters({
+          regionId: null,
+          daerahTingkat: null,
+          kotaKab: null,
+          page: 1 // Reset to page 1
+        });
+      }
     }
   }, [setSelectedLocation, setSelectedRegion, updateFilters]);
 
   const handleRegionSelect = useCallback((region) => {
-    setSelectedRegion(region);
+    // Update local state
+    if (setSelectedRegion) {
+      setSelectedRegion(region);
+    }
+    
+    // Reset location selection if region is selected
+    if (region && region.id !== 'all' && setSelectedLocation) {
+      setSelectedLocation(null);
+    }
     
     // Update filters directly when region changes
     if (updateFilters) {
       if (region && region.id !== 'all') {
         // Prepare filter updates based on region type
-        const filterUpdates = { regionId: region.id };
+        const filterUpdates = { 
+          regionId: region.id,
+          page: 1 // Reset to page 1 when region changes
+        };
         
         if (region.id.startsWith('province-')) {
           filterUpdates.provinsi = region.name;
@@ -112,32 +136,40 @@ export default function FilterBar({
           regionId: null,
           provinsi: null,
           daerahTingkat: null,
-          kotaKab: null
+          kotaKab: null,
+          page: 1 // Reset to page 1
         });
       }
-    }
-    
-    // Reset location search if region is selected
-    if (region && region.id !== 'all') {
-      setSelectedLocation(null);
     }
   }, [setSelectedRegion, setSelectedLocation, updateFilters]);
   
   // Handle year filter changes
   const handleYearChange = useCallback((year) => {
-    setFilterYear(year);
+    if (setFilterYear) {
+      setFilterYear(year);
+    }
     setShowYearDropdown(false);
     
     // Update global filters when year changes
     if (updateFilters) {
-      updateFilters({ year: parseInt(year, 10) });
+      updateFilters({ 
+        year: parseInt(year, 10),
+        page: 1 // Reset to page 1 when year changes
+      });
     }
   }, [setFilterYear, updateFilters]);
   
   // Reset to Jakarta Selatan default view
   const handleResetFilter = useCallback(() => {
-    setSelectedLocation(null);
-    setSearchQuery('');
+    // Reset local state
+    if (setSelectedLocation) {
+      setSelectedLocation(null);
+    }
+    
+    if (setSearchQuery) {
+      setSearchQuery('');
+    }
+    
     setLocalSearchQuery('');
     
     // Set to default Jakarta Selatan region
@@ -155,6 +187,7 @@ export default function FilterBar({
         provinsi: 'DKI Jakarta',    // Default Jakarta
         daerahTingkat: 'Kota',      // Default Kota
         kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
+        page: 1                      // Reset to page 1
       });
     }
   }, [setSelectedLocation, setSelectedRegion, setSearchQuery, updateFilters]);
