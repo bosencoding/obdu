@@ -54,10 +54,18 @@ export default function TableSection({
   // Fetch total item count on component mount and when filters change
   // This ensures we always have the most accurate count
   useEffect(() => {
-    if (useDataContext && typeof fetchTotalItemCount === 'function') {
-      fetchTotalItemCount(filters);
+    if (useDataContext && filters) {
+      // Sync with current filters
+      setCurrentPage(filters.page || 1);
+      
+      // If tableData is empty but we should have data, try to fetch
+      if (tableData.length === 0 && !loadingState && !tableError) {
+        if (typeof fetchTableData === 'function') {
+          fetchTableData(filters.page || 1, itemsPerPage);
+        }
+      }
     }
-  }, [useDataContext, fetchTotalItemCount, filters]);
+  }, [filters, useDataContext, tableData, loadingState, tableError, fetchTableData, itemsPerPage]);
   
   // More reliable handler for pagination changes
   const handlePageChange = useCallback((newPage) => {

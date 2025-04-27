@@ -436,8 +436,6 @@ export function DataProvider({ children }) {
     return pendingFetchRef.current;
   }, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
 
-  // Function to update filters and fetch new data
-  // With anti-loop protection
   const updateFilters = useCallback((newFilters) => {
     // Debug log
     logDebug('updateFilters called with', newFilters);
@@ -461,7 +459,11 @@ export function DataProvider({ children }) {
       else if (newFilters[key] !== filters[key]) {
         updatedFilters[key] = newFilters[key];
         hasChanged = true;
-        if (key === 'page' && Object.keys(newFilters).length === 1) {
+        // If searchQuery changed, mark as significant change
+        if (key === 'searchQuery' || key === 'regionId' || key === 'provinsi' || 
+            key === 'daerahTingkat' || key === 'kotaKab') {
+          hasChangedPageOnly = false;
+        } else if (key === 'page' && Object.keys(newFilters).length === 1) {
           hasChangedPageOnly = true;
         }
       }
@@ -498,6 +500,7 @@ export function DataProvider({ children }) {
     
     return updatedFilters;
   }, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
+  
 
   // Initial data loading (only once)
   useEffect(() => {

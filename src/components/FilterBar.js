@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+// Fixed FilterBar.js search implementation
+
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Filter, Download, ChevronDown } from 'lucide-react';
 import RegionDropdown from './RegionDropdown';
 import AutocompleteSearch from './AutoCompleteSearch';
+import { useData } from '@/app/context/DataContext';
 
 export default function FilterBar({ 
   searchQuery, 
@@ -13,20 +16,39 @@ export default function FilterBar({
   selectedLocation,
   setSelectedLocation
 }) {
+  // Get updateFilters directly from DataContext to ensure we can update global state
+  const { updateFilters } = useData();
+  
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
+  const debounceTimerRef = useRef(null);
   const years = ['2021', '2022', '2023', '2024', '2025'];
   
   // Debounce search query to prevent excessive API calls
+  // AND ensure it updates the global filters
   useEffect(() => {
-    const timerId = setTimeout(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    debounceTimerRef.current = setTimeout(() => {
       if (localSearchQuery !== searchQuery) {
+        // Update the parent's state via prop
         setSearchQuery(localSearchQuery);
+        
+        // IMPORTANT ADDITION: Update global filters for search
+        if (updateFilters) {
+          updateFilters({ searchQuery: localSearchQuery });
+        }
       }
     }, 500); // Wait 500ms after user stops typing
     
-    return () => clearTimeout(timerId);
-  }, [localSearchQuery, searchQuery, setSearchQuery]);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [localSearchQuery, searchQuery, setSearchQuery, updateFilters]);
   
   // When searchQuery prop changes (from parent), update local state
   useEffect(() => {
@@ -34,21 +56,83 @@ export default function FilterBar({
   }, [searchQuery]);
   
   // Callbacks for location and region selection
+  // Modified to update global filters directly
   const handleLocationSelect = useCallback((location) => {
     setSelectedLocation(location);
+    
+    // Update filters directly when location changes
+    if (updateFilters && location) {
+      updateFilters({
+        regionId: location.id,
+        provinsi: location.provinsi,
+        daerahTingkat: location.type || null,
+        kotaKab: location.name && location.type ? 
+                 location.name.replace(location.type, '').trim() : 
+                 location.name
+      });
+    } else if (updateFilters && !location) {
+      // Reset location filters if location is cleared
+      updateFilters({
+        regionId: null,
+        daerahTingkat: null,
+        kotaKab: null
+      });
+    }
+    
     // Reset region selection when location is selected
     if (location) {
       setSelectedRegion(null);
     }
-  }, [setSelectedLocation, setSelectedRegion]);
+  }, [setSelectedLocation, setSelectedRegion, updateFilters]);
 
   const handleRegionSelect = useCallback((region) => {
     setSelectedRegion(region);
+    
+    // Update filters directly when region changes
+    if (updateFilters) {
+      if (region && region.id !== 'all') {
+        // Prepare filter updates based on region type
+        const filterUpdates = { regionId: region.id };
+        
+        if (region.id.startsWith('province-')) {
+          filterUpdates.provinsi = region.name;
+          filterUpdates.daerahTingkat = null;
+          filterUpdates.kotaKab = null;
+        } else if (region.id.startsWith('region-')) {
+          filterUpdates.provinsi = region.provinsi;
+          filterUpdates.daerahTingkat = region.type;
+          const kotaKab = region.name.replace(region.type || '', '').trim();
+          filterUpdates.kotaKab = kotaKab;
+        }
+        
+        updateFilters(filterUpdates);
+      } else {
+        // Reset region filters if "all" is selected
+        updateFilters({
+          regionId: null,
+          provinsi: null,
+          daerahTingkat: null,
+          kotaKab: null
+        });
+      }
+    }
+    
     // Reset location search if region is selected
     if (region && region.id !== 'all') {
       setSelectedLocation(null);
     }
-  }, [setSelectedRegion, setSelectedLocation]);
+  }, [setSelectedRegion, setSelectedLocation, updateFilters]);
+  
+  // Handle year filter changes
+  const handleYearChange = useCallback((year) => {
+    setFilterYear(year);
+    setShowYearDropdown(false);
+    
+    // Update global filters when year changes
+    if (updateFilters) {
+      updateFilters({ year: parseInt(year, 10) });
+    }
+  }, [setFilterYear, updateFilters]);
   
   // Reset to Jakarta Selatan default view
   const handleResetFilter = useCallback(() => {
@@ -62,13 +146,18 @@ export default function FilterBar({
       const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
       setSelectedRegion(defaultRegion);
     }
-  }, [setSelectedLocation, setSelectedRegion, setSearchQuery]);
-  
-  // Function to export current data as CSV
-  const handleExportData = () => {
-    // You could implement actual export functionality here
-    alert('Data akan diekspor (fungsi belum diimplementasikan)');
-  };
+    
+    // Reset filters in global context
+    if (updateFilters) {
+      updateFilters({
+        searchQuery: '',
+        regionId: null,
+        provinsi: 'DKI Jakarta',    // Default Jakarta
+        daerahTingkat: 'Kota',      // Default Kota
+        kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
+      });
+    }
+  }, [setSelectedLocation, setSelectedRegion, setSearchQuery, updateFilters]);
   
   // Create Jakarta Selatan filter label if no specific filters are applied
   const isDefaultJakselView = !searchQuery && 
@@ -105,7 +194,7 @@ export default function FilterBar({
             <span>Export</span>
           </button>
           
-          {/* Year Dropdown - Optimized with callback */}
+          {/* Year Dropdown - Updated with direct filter updating */}
           <div className="relative">
             <button 
               className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50"
@@ -120,10 +209,7 @@ export default function FilterBar({
                 {years.map(year => (
                   <button 
                     key={year}
-                    onClick={() => {
-                      setFilterYear(year);
-                      setShowYearDropdown(false);
-                    }}
+                    onClick={() => handleYearChange(year)}
                     className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${
                       year === filterYear ? 'bg-gray-50 font-medium' : ''
                     }`}
@@ -162,4 +248,9 @@ export default function FilterBar({
       ) : null}
     </div>
   );
+}
+
+// Placeholder for handleExportData function
+function handleExportData() {
+  alert('Data akan diekspor (fungsi belum diimplementasikan)');
 }

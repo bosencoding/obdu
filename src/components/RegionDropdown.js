@@ -75,6 +75,11 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
   const selectRegion = (region) => {
     setSelectedRegion(region);
     setIsOpen(false);
+    
+    // Make sure this change propagates to parent components
+    if (typeof setSelectedRegion === 'function') {
+      setSelectedRegion(region);
+    }
   };
 
   return (

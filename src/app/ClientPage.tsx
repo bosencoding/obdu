@@ -239,15 +239,17 @@ export default function ClientPage() {
       />
       
       <FilterBar
-        searchQuery={searchQuery}
-        setSearchQuery={handleSearchQueryChange}
-        filterYear={filterYear}
-        setFilterYear={setFilterYear}
-        selectedRegion={selectedRegion}
-        setSelectedRegion={handleRegionChange}
-        selectedLocation={selectedLocation}
-        setSelectedLocation={handleLocationChange}
-      />
+  searchQuery={searchQuery}
+  setSearchQuery={handleSearchQueryChange}
+  filterYear={filterYear}
+  setFilterYear={setFilterYear}
+  selectedRegion={selectedRegion}
+  setSelectedRegion={handleRegionChange}
+  selectedLocation={selectedLocation}
+  setSelectedLocation={handleLocationChange}
+  updateFilters={updateFilters} // Add this line to pass the function
+/>
+
       
       <ChartsSection 
         pieData={chartData.pie}
