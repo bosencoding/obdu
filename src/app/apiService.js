@@ -73,38 +73,38 @@ async function apiRequest(url, options = {}) {
 function buildQueryParams(filters = {}) {
   const params = new URLSearchParams();
   
-  // Only add parameters that are defined
+  // Hanya tambahkan parameter yang terdefinisi
   if (filters.searchQuery) params.append('search', filters.searchQuery);
   if (filters.year) params.append('year', filters.year);
   if (filters.regionId) params.append('region_id', filters.regionId);
   if (filters.provinsi) params.append('provinsi', filters.provinsi);
   if (filters.daerahTingkat) params.append('daerah_tingkat', filters.daerahTingkat);
   if (filters.kotaKab) params.append('kota_kab', filters.kotaKab);
-  if (filters.minPagu !== undefined && filters.minPagu !== null) params.append('min_pagu', filters.minPagu);
-  if (filters.maxPagu !== undefined && filters.maxPagu !== null) params.append('max_pagu', filters.maxPagu);
+  if (filters.minPagu !== undefined) params.append('min_pagu', filters.minPagu);
+  if (filters.maxPagu !== undefined) params.append('max_pagu', filters.maxPagu);
   if (filters.metode) params.append('metode', filters.metode);
   if (filters.jenisPengadaan) params.append('jenis_pengadaan', filters.jenisPengadaan);
   
-  // Pagination parameters - ensure they're handled properly
+  // Parameter paginasi - pastikan penanganan yang tepat
   if (filters.page !== undefined && filters.limit !== undefined) {
-    // Calculate skip based on page and limit 
-    // (page is 1-indexed in UI, but skip is 0-indexed in API)
+    // Hitung skip berdasarkan page dan limit
+    // (page adalah 1-indexed di UI, tetapi skip adalah 0-indexed di API)
     const skip = (filters.page - 1) * filters.limit;
     params.append('skip', skip.toString());
     params.append('limit', filters.limit.toString());
   }
-  // Support direct skip/limit if provided
+  // Support skip/limit langsung jika disediakan
   else {
     if (filters.skip !== undefined) params.append('skip', filters.skip.toString());
     if (filters.limit !== undefined) params.append('limit', filters.limit.toString());
   }
   
-  // Add count parameter if needed
+  // Tambahkan parameter count_only jika diperlukan
   if (filters.countOnly) {
     params.append('count_only', 'true');
   }
   
-  return params;
+  return params.toString();
 }
 
 /**
@@ -155,30 +155,18 @@ export async function getChartData(chartType, filters = {}) {
   return apiRequest(`/dashboard/chart/${chartType}?${params.toString()}`);
 }
 
-/**
- * Get data for the table based on filters
- * @param {Object} filters - Filter criteria
- * @returns {Promise<Array>} - Filtered data for the table
- */
 export async function getFilteredPackages(filters = {}) {
   try {
-    // If this is a count-only request, use dedicated count function
-    if (filters.countOnly) {
-      const count = await getPackageCount(filters);
-      return [{ totalCount: count }];
-    }
-    
-    // Make sure page and limit are included in filters
+    // Pastikan page dan limit termasuk dalam filters
     const paginationFilters = {
       ...filters,
       limit: filters.limit || 10,
       page: filters.page || 1
     };
 
-    // Build query params
+    // Bangun query params
     const params = buildQueryParams(paginationFilters);
-    console.log('Query params untuk API:', params.toString()); // Tambahkan log ini
-    // Log request details for debugging
+    
     console.log('Filtered packages request:', {
       filters: paginationFilters,
       params: params.toString()
@@ -186,28 +174,28 @@ export async function getFilteredPackages(filters = {}) {
 
     const response = await apiRequest(`/paket/filter?${params.toString()}`);
     
-    // Check if response includes total count information
+    // Periksa apakah response mencakup informasi total count
     if (response && typeof response === 'object' && !Array.isArray(response)) {
-      // Some APIs return { data: [...], totalCount: 123 }
+      // Beberapa API mengembalikan { data: [...], totalCount: 123 }
       if (response.data && Array.isArray(response.data) && response.totalCount !== undefined) {
-        // Add totalCount to the array to pass it along
+        // Tambahkan totalCount ke array untuk meneruskannya
         response.data.totalCount = response.totalCount;
         return response.data;
       }
-      // Some APIs return { items: [...], count: 123 }
+      // Beberapa API mengembalikan { items: [...], count: 123 }
       if (response.items && Array.isArray(response.items) && response.count !== undefined) {
-        // Add totalCount to the array to pass it along
+        // Tambahkan totalCount ke array untuk meneruskannya
         response.items.totalCount = response.count;
         return response.items;
       }
     }
     
-    // If it's just an array, return as is
+    // Jika hanya array, kembalikan apa adanya
     if (Array.isArray(response)) {
       return response;
     }
     
-    // Fallback to empty array if response format is unexpected
+    // Fallback ke array kosong jika format response tidak terduga
     console.warn('Unexpected response format from API:', response);
     return [];
   } catch (error) {
@@ -225,16 +213,12 @@ export async function getWilayahList() {
   return apiRequest('/wilayah/');
 }
 
-/**
- * Get the total count of filtered packages
- * @param {Object} filters - Filter criteria (without pagination)
- * @returns {Promise<number>} - Total number of items matching filters
- */
 export async function getPackageCount(filters = {}) {
   try {
-    // Build query params - exclude pagination
+    // Buat parameter query - tanpa pagination
     const countParams = new URLSearchParams();
     
+    // Tambahkan parameter filter yang relevan
     if (filters.searchQuery) countParams.append('search', filters.searchQuery);
     if (filters.year) countParams.append('year', filters.year);
     if (filters.regionId) countParams.append('region_id', filters.regionId);
@@ -246,18 +230,18 @@ export async function getPackageCount(filters = {}) {
     if (filters.metode) countParams.append('metode', filters.metode);
     if (filters.jenisPengadaan) countParams.append('jenis_pengadaan', filters.jenisPengadaan);
     
-    // Add count_only flag
+    // Tambahkan flag count_only 
     countParams.append('count_only', 'true');
-    
-    // Jangan gunakan pagination saat menghitung total
+    // Gunakan limit minimal untuk hanya mendapatkan count
     countParams.append('limit', '1');
     
-    // Coba mendapatkan hitungan total dari API
+    console.log(`Fetching count with params: ${countParams.toString()}`);
+    
+    // Panggil API untuk mendapatkan total count
     const response = await apiRequest(`/paket/filter?${countParams.toString()}`);
     
-    // Coba ekstrak total count dari beberapa format response yang berbeda
+    // Ekstrak total count dari berbagai format response yang mungkin
     if (response) {
-      // Try different potential response formats
       if (typeof response.recordsFiltered === 'number') {
         return response.recordsFiltered;
       }
@@ -274,45 +258,32 @@ export async function getPackageCount(filters = {}) {
         return response.total;
       }
       
-      // If the API returns an array with totalCount property
+      // Jika API mengembalikan array dengan properti totalCount
       if (Array.isArray(response) && response.totalCount !== undefined) {
         return response.totalCount;
       }
       
-      // If it returns an array, we may have to estimate based on other
-      // endpoints or return a reasonable default
-      if (Array.isArray(response)) {
-        // Get count from region selection if available
-        const regionCount = filters.regionId && filters.regionId !== 'all' && 
-                           (await getRegionsList()).find(r => r.id === filters.regionId)?.count;
-        
-        if (regionCount) {
-          return regionCount;
+      // Jika tidak ada informasi count eksplisit, coba gunakan info dari region
+      if (filters.regionId && filters.regionId !== 'all') {
+        try {
+          const regions = await getRegionsList();
+          const selectedRegion = regions.find(r => r.id === filters.regionId);
+          if (selectedRegion && selectedRegion.count > 0) {
+            return selectedRegion.count;
+          }
+        } catch (e) {
+          console.error('Error getting count from regions list:', e);
         }
       }
     }
     
-    // If we can't determine count from API response, try to get count from selected region
-    if (filters.regionId && filters.regionId !== 'all') {
-      try {
-        const regions = await getRegionsList();
-        const selectedRegion = regions.find(r => r.id === filters.regionId);
-        if (selectedRegion && selectedRegion.count > 0) {
-          return selectedRegion.count;
-        }
-      } catch (e) {
-        console.error('Error getting count from regions list:', e);
-      }
-    }
-    
-    // Return a reasonable default count that's likely to be correct
+    // Jika tidak dapat menentukan count, gunakan perkiraan yang wajar
     return 500;
   } catch (error) {
     console.error('Error getting package count:', error);
-    return 500; // Default count for error case
+    return 500; // Nilai default untuk kasus error
   }
 }
-
 
 /**
  * Handle unexpected API errors

@@ -264,18 +264,19 @@ export function DataProvider({ children }) {
   }, []);
 
   // Function to fetch just the total count of items
+// Fungsi untuk mengambil jumlah total item
 const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
   const filtersToUse = currentFilters || filters;
   
   try {
     logDebug('Fetching total item count for all records', filtersToUse);
     
-    // Using the imported getPackageCount function
+    // Menggunakan fungsi getPackageCount yang telah diimpor
     const totalCount = await getPackageCount(filtersToUse);
     
     logDebug('API returned total count', totalCount);
     
-    // Update dashboard data with the exact total count
+    // Perbarui data dashboard dengan jumlah total yang tepat
     setDashboardData(prev => ({
       ...prev,
       table: {
@@ -293,92 +294,103 @@ const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
   }
 }, [filters, logDebug, dashboardData.table.totalItems]);
 
-  // Enhanced function to fetch table data
-  const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
-    const filtersToUse = currentFilters || filters;
+  // Perbaikan pada fetchTableData di DataContext.js
+// Enhanced function to fetch table data with less API calls
+const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
+  const filtersToUse = currentFilters || filters;
+  
+  // Optimize: Skip count fetch if we already know the total count
+  const optimizedFilters = {
+    ...filtersToUse,
+    page,
+    limit,
+    // Only include count_only if we don't already know the total count
+    countOnly: filtersToUse.skipCountFetch ? undefined : true
+  };
+  
+  try {
+    setLoadingState(prev => ({ ...prev, table: true }));
     
-    // Make sure we use the provided page and limit
-    const tableFilters = {
-      ...filtersToUse,
-      page,
-      limit
-    };
+    // Log pagination request for debugging
+    logDebug('Fetching table data with pagination:', { 
+      page, 
+      limit, 
+      filters: optimizedFilters,
+      skipCountFetch: filtersToUse.skipCountFetch
+    });
     
-    try {
-      setLoadingState(prev => ({ ...prev, table: true }));
-      
-      // Log pagination request for debugging
-      logDebug('Fetching table data with pagination:', { page, limit, filters: tableFilters });
-      
-      const data = await getFilteredPackages(tableFilters);
-      
-      if (!Array.isArray(data)) {
-        logDebug('Received non-array data from API:', data);
-        return dashboardData.table.data;
-      }
-      
-      // Process table data
-      const processedData = data.map((item, index) => ({
-        no: (page - 1) * limit + index + 1,
-        nama: item.paket || '',
-        satuan: item.satuan_kerja || '',
-        krema: item.metode || '',
-        jadwal: item.pemilihan || 'Belum ditentukan',
-        wilayah: formatWilayah(item),
-        status: determineStatus(item),
-        keterangan: item.jenis_pengadaan || ''
-      }));
-      
-      // Calculate total items based on API response
-      const hasFullPage = data.length >= limit;
-      const newTotalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
-      
-      logDebug('Table data received:', { 
-        count: data.length, 
-        hasFullPage, 
-        page, 
-        limit,
-        estimatedTotal: newTotalItems
-      });
-      
-      // Update state with fetched data
-      setDashboardData(prev => ({
-        ...prev,
-        table: {
-          data: processedData,
-          totalItems: newTotalItems,
-          hasFullPage
-        }
-      }));
-      
-      return processedData;
-    } catch (error) {
-      console.error('Error fetching table data:', error);
-      // Keep current table data on error
+    const data = await getFilteredPackages(optimizedFilters);
+    
+    if (!Array.isArray(data)) {
+      logDebug('Received non-array data from API:', data);
       return dashboardData.table.data;
-    } finally {
-      setLoadingState(prev => ({ ...prev, table: false }));
     }
-  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, logDebug]);
+    
+    // Process table data
+    const processedData = data.map((item, index) => ({
+      no: (page - 1) * limit + index + 1,
+      nama: item.paket || '',
+      satuan: item.satuan_kerja || '',
+      krema: item.metode || '',
+      jadwal: item.pemilihan || 'Belum ditentukan',
+      wilayah: formatWilayah(item),
+      status: determineStatus(item),
+      keterangan: item.jenis_pengadaan || ''
+    }));
+    
+    // Update total items if available from API response or use existing/provided count
+    let newTotalItems = filtersToUse.knownTotalCount || dashboardData.table.totalItems;
+    
+    // If data has totalCount property directly from API
+    if (data.totalCount !== undefined) {
+      newTotalItems = data.totalCount;
+    } else if (!filtersToUse.skipCountFetch) {
+      // Only calculate if we haven't explicitly skipped count fetch
+      newTotalItems = calculateTotalItems(data, page, limit, dashboardData.table.totalItems);
+    }
+    
+    logDebug('Table data received:', { 
+      count: data.length, 
+      hasFullPage: data.length >= limit, 
+      page, 
+      limit,
+      totalItems: newTotalItems
+    });
+    
+    // Update state with fetched data
+    setDashboardData(prev => ({
+      ...prev,
+      table: {
+        data: processedData,
+        totalItems: newTotalItems,
+        hasFullPage: data.length >= limit
+      }
+    }));
+    
+    return processedData;
+  } catch (error) {
+    console.error('Error fetching table data:', error);
+    // Keep current table data on error
+    return dashboardData.table.data;
+  } finally {
+    setLoadingState(prev => ({ ...prev, table: false }));
+  }
+}, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, logDebug]);
 
   // Tambahkan fungsi ini di dalam DataContext.js dalam Provider component:
 
 // Function to fetch all dashboard data in one go
-// With debounce and loop prevention
 const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
-  // Use current filters if not provided
+  // Gunakan current filters jika tidak disediakan
   const filtersToUse = currentFilters || filters;
   
-  // Log the filters we're using
-  console.log('[DataContext] Fetching all dashboard data with filters:', filtersToUse);
-  
-  // Check if there's already a fetch in progress
+  // Periksa jika sudah ada fetch yang sedang berlangsung
   if (pendingFetchRef.current) {
     logDebug('Fetch already in progress, skipping', { filters: filtersToUse });
     return null;
   }
   
-  // Debounce fetches - don't fetch more often than every 500ms
+  // Debounce fetches - jangan fetch lebih sering dari setiap 500ms
   const now = Date.now();
   if (now - lastFetchTimeRef.current < 500) {
     logDebug('Debouncing fetch, too soon since last fetch', {
@@ -388,7 +400,7 @@ const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
     return null;
   }
   
-  // Create a new pending promise
+  // Buat promise pending baru
   pendingFetchRef.current = (async () => {
     logDebug('Starting fetch all dashboard data', { filters: filtersToUse });
     lastFetchTimeRef.current = now;
@@ -403,16 +415,43 @@ const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
     }));
     
     try {
-      // First fetch the total count to ensure accurate pagination
-      await fetchTotalItemCount(filtersToUse);
+      // PENTING: Ambil total count terlebih dahulu dalam satu panggilan API
+      const totalCount = await fetchTotalItemCount(filtersToUse);
       
-      // Then fetch all other data in parallel to reduce overall loading time
-      const [stats, pieData, barData, tableData] = await Promise.all([
-        fetchDashboardStats(filtersToUse),
-        fetchChartData('pie', filtersToUse),
-        fetchChartData('bar', filtersToUse),
-        fetchTableData(filtersToUse.page, filtersToUse.limit, filtersToUse)
-      ]);
+      // Gunakan totalCount yang sudah diambil sebagai parameter tambahan
+      // Ini mencegah fetchTableData melakukan panggilan count lagi
+      const enhancedFilters = {
+        ...filtersToUse,
+        // Flag untuk menandai bahwa count sudah diambil
+        skipCountFetch: true,
+        knownTotalCount: totalCount
+      };
+      
+      // Fetch data tabel dalam satu panggilan lain (tidak perlu fetch count lagi)
+      const tableData = await fetchTableData(
+        enhancedFilters.page || 1, 
+        enhancedFilters.limit || 10, 
+        enhancedFilters
+      );
+      
+      // Pisahkan fetching untuk stats dan charts karena tidak selalu dibutuhkan 
+      // saat navigasi paginasi
+      let stats = dashboardData.stats;
+      let pieData = dashboardData.charts.pie;
+      let barData = dashboardData.charts.bar;
+      
+      // Hanya fetch stats dan charts jika filter utama berubah (bukan hanya paginasi)
+      const isPageChangeOnly = 
+        Object.keys(filtersToUse).length === 1 && 
+        filtersToUse.page !== undefined;
+        
+      if (!isPageChangeOnly) {
+        [stats, pieData, barData] = await Promise.all([
+          fetchDashboardStats(enhancedFilters),
+          fetchChartData('pie', enhancedFilters),
+          fetchChartData('bar', enhancedFilters)
+        ]);
+      }
       
       dataFetchedRef.current = true;
       
@@ -438,76 +477,72 @@ const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
   })();
   
   return pendingFetchRef.current;
-}, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
+}, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug, dashboardData]);
 
-  // Main function to update filters with loop prevention
-  const updateFilters = useCallback((newFilters) => {
-    // Debug log
-    logDebug('updateFilters called with', newFilters);
-    
-    // Check if the new filters are actually different from current filters
-    let hasChanged = false;
-    let hasChangedPageOnly = false;
-    const updatedFilters = { ...filters };
-    
-    // Check each key for actual changes
-    Object.keys(newFilters).forEach(key => {
-      // Special handling for objects and arrays
-      if (typeof newFilters[key] === 'object' && newFilters[key] !== null) {
-        if (JSON.stringify(newFilters[key]) !== JSON.stringify(filters[key])) {
-          updatedFilters[key] = newFilters[key];
-          hasChanged = true;
-          if (key !== 'page') hasChangedPageOnly = false;
-        }
-      } 
-      // Standard value comparison
-      else if (newFilters[key] !== filters[key]) {
+// Main function to update filters with optimized fetch logic
+const updateFilters = useCallback((newFilters) => {
+  // Debug log
+  logDebug('updateFilters called with', newFilters);
+  
+  // Check if this is just a page change
+  const isPageChangeOnly = 
+    Object.keys(newFilters).length === 1 && 
+    newFilters.page !== undefined;
+  
+  // Check if the new filters are actually different from current filters
+  let hasChanged = false;
+  const updatedFilters = { ...filters };
+  
+  // Check each key for actual changes
+  Object.keys(newFilters).forEach(key => {
+    // Special handling for objects and arrays
+    if (typeof newFilters[key] === 'object' && newFilters[key] !== null) {
+      if (JSON.stringify(newFilters[key]) !== JSON.stringify(filters[key])) {
         updatedFilters[key] = newFilters[key];
         hasChanged = true;
-        // If searchQuery or location filters changed, mark as significant change
-        if (key === 'searchQuery' || key === 'regionId' || key === 'provinsi' || 
-            key === 'daerahTingkat' || key === 'kotaKab') {
-          hasChangedPageOnly = false;
-        } else if (key === 'page' && Object.keys(newFilters).length === 1) {
-          hasChangedPageOnly = true;
-        }
       }
-    });
-    
-    // If nothing has changed, don't update state or trigger new fetch
-    if (!hasChanged) {
-      logDebug('No filter changes detected, skipping update');
-      return filters;
+    } 
+    // Standard value comparison
+    else if (newFilters[key] !== filters[key]) {
+      updatedFilters[key] = newFilters[key];
+      hasChanged = true;
     }
-    
-    // Reset to page 1 if anything other than page changes
-    if (hasChanged && !hasChangedPageOnly && newFilters.page === undefined) {
-      updatedFilters.page = 1;
-    }
-    
-    // Update filters state immediately
-    setFilters(updatedFilters);
-    logDebug('Filter state updated to', updatedFilters);
-    
-    // Schedule fetch for next tick to avoid potential loops
-    setTimeout(() => {
+  });
+  
+  // If nothing has changed, don't update state or trigger new fetch
+  if (!hasChanged) {
+    logDebug('No filter changes detected, skipping update');
+    return filters;
+  }
+  
+  // Reset to page 1 if anything other than page changes
+  if (hasChanged && !isPageChangeOnly) {
+    updatedFilters.page = 1;
+  }
+  
+  // Update filters state immediately
+  setFilters(updatedFilters);
+  logDebug('Filter state updated to', updatedFilters);
+  
+  // Optimize fetching based on what changed
+  setTimeout(() => {
+    if (isPageChangeOnly) {
       // If only the page changed, just fetch the table data for that page
-      if (hasChangedPageOnly) {
-        // Use the page from newFilters, fallback to current page
-        const pageToFetch = newFilters.page || filters.page || 1;
-        const limitToUse = filters.limit || 10;
-        
-        logDebug(`Fetching table data for page ${pageToFetch}`);
-        fetchTableData(pageToFetch, limitToUse, updatedFilters);
-      } else {
-        // Other filters changed, fetch all data
-        logDebug('Fetching all dashboard data with updated filters');
-        fetchAllDashboardData(updatedFilters);
-      }
-    }, 0);
-    
-    return updatedFilters;
-  }, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
+      // without refetching stats or charts
+      const pageToFetch = newFilters.page || filters.page || 1;
+      const limitToUse = filters.limit || 10;
+      
+      logDebug(`Fetching ONLY table data for page ${pageToFetch}`);
+      fetchTableData(pageToFetch, limitToUse, updatedFilters);
+    } else {
+      // Other filters changed, fetch all data
+      logDebug('Fetching all dashboard data with updated filters');
+      fetchAllDashboardData(updatedFilters);
+    }
+  }, 0);
+  
+  return updatedFilters;
+}, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
 
   // Initial data loading (only once)
   useEffect(() => {
