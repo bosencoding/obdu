@@ -1,5 +1,4 @@
-// Fixed FilterBar.js search implementation
-
+// src/components/FilterBar.js
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, Filter, Download, ChevronDown } from 'lucide-react';
 import RegionDropdown from './RegionDropdown';
@@ -16,66 +15,100 @@ export default function FilterBar({
   selectedLocation,
   setSelectedLocation
 }) {
-  // Get updateFilters directly from DataContext to ensure we can update global state
-  const { updateFilters } = useData();
+  // Get updateFilters directly from DataContext
+  const { updateFilters, filters: contextFilters } = useData();
   
   const [showYearDropdown, setShowYearDropdown] = useState(false);
-  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
+  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery || '');
   const debounceTimerRef = useRef(null);
   const years = ['2021', '2022', '2023', '2024', '2025'];
   
-  // Debounce search query to prevent excessive API calls
-  // AND ensure it updates the global filters
+  // Sync local state with context when needed
   useEffect(() => {
+    if (contextFilters?.searchQuery !== undefined && contextFilters.searchQuery !== localSearchQuery) {
+      setLocalSearchQuery(contextFilters.searchQuery);
+    }
+  }, [contextFilters?.searchQuery]);
+  
+  // When searchQuery prop changes (from parent), update local state
+  useEffect(() => {
+    if (searchQuery !== undefined && searchQuery !== localSearchQuery) {
+      setLocalSearchQuery(searchQuery);
+    }
+  }, [searchQuery]);
+  
+  // Apply the search filter directly without debounce when user submits
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    
+    // Apply search immediately on submit
+    setSearchQuery(localSearchQuery);
+    
+    // Update global filters
+    if (updateFilters) {
+      updateFilters({ 
+        searchQuery: localSearchQuery,
+        page: 1 // Reset to page 1 when searching
+      });
+    }
+  };
+  
+  // Debounced search handling
+  const handleSearchChange = (e) => {
+    const value = e.target.value;
+    setLocalSearchQuery(value);
+    
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
     
     debounceTimerRef.current = setTimeout(() => {
-      if (localSearchQuery !== searchQuery) {
-        // Update the parent's state via prop
-        setSearchQuery(localSearchQuery);
-        
-        // IMPORTANT ADDITION: Update global filters for search
-        if (updateFilters) {
-          updateFilters({ searchQuery: localSearchQuery });
-        }
+      setSearchQuery(value);
+      
+      // Update global filters after debounce
+      if (updateFilters) {
+        updateFilters({ 
+          searchQuery: value,
+          page: 1 // Reset to page 1 when search changes
+        });
       }
-    }, 500); // Wait 500ms after user stops typing
-    
+    }, 800); // Slightly longer debounce for typing
+  };
+  
+  // Clear debounce timer on unmount
+  useEffect(() => {
     return () => {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [localSearchQuery, searchQuery, setSearchQuery, updateFilters]);
-  
-  // When searchQuery prop changes (from parent), update local state
-  useEffect(() => {
-    setLocalSearchQuery(searchQuery);
-  }, [searchQuery]);
+  }, []);
   
   // Callbacks for location and region selection
-  // Modified to update global filters directly
   const handleLocationSelect = useCallback((location) => {
+    console.log('Location selected:', location);
     setSelectedLocation(location);
     
     // Update filters directly when location changes
     if (updateFilters && location) {
+      const locationName = location.name || '';
+      // Extract the city name from the location name if it includes the type
+      const kotaKab = location.type ? locationName.replace(location.type, '').trim() : locationName;
+      
       updateFilters({
         regionId: location.id,
         provinsi: location.provinsi,
         daerahTingkat: location.type || null,
-        kotaKab: location.name && location.type ? 
-                 location.name.replace(location.type, '').trim() : 
-                 location.name
+        kotaKab: kotaKab,
+        page: 1 // Reset to page 1 when location changes
       });
     } else if (updateFilters && !location) {
       // Reset location filters if location is cleared
       updateFilters({
         regionId: null,
         daerahTingkat: null,
-        kotaKab: null
+        kotaKab: null,
+        page: 1
       });
     }
     
@@ -86,13 +119,17 @@ export default function FilterBar({
   }, [setSelectedLocation, setSelectedRegion, updateFilters]);
 
   const handleRegionSelect = useCallback((region) => {
+    console.log('Region selected:', region);
     setSelectedRegion(region);
     
     // Update filters directly when region changes
     if (updateFilters) {
       if (region && region.id !== 'all') {
         // Prepare filter updates based on region type
-        const filterUpdates = { regionId: region.id };
+        const filterUpdates = { 
+          regionId: region.id,
+          page: 1 // Reset to page 1 when region changes
+        };
         
         if (region.id.startsWith('province-')) {
           filterUpdates.provinsi = region.name;
@@ -112,7 +149,8 @@ export default function FilterBar({
           regionId: null,
           provinsi: null,
           daerahTingkat: null,
-          kotaKab: null
+          kotaKab: null,
+          page: 1
         });
       }
     }
@@ -130,19 +168,21 @@ export default function FilterBar({
     
     // Update global filters when year changes
     if (updateFilters) {
-      updateFilters({ year: parseInt(year, 10) });
+      updateFilters({ 
+        year: parseInt(year, 10),
+        page: 1 // Reset to page 1 when year changes
+      });
     }
   }, [setFilterYear, updateFilters]);
   
   // Reset to Jakarta Selatan default view
   const handleResetFilter = useCallback(() => {
     setSelectedLocation(null);
-    setSearchQuery('');
     setLocalSearchQuery('');
+    setSearchQuery('');
     
-    // Set to default Jakarta Selatan region
+    // Reset to default Jakarta Selatan region
     if (setSelectedRegion) {
-      // Either reset to "all" or you can create a default Jakarta Selatan region
       const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
       setSelectedRegion(defaultRegion);
     }
@@ -155,38 +195,47 @@ export default function FilterBar({
         provinsi: 'DKI Jakarta',    // Default Jakarta
         daerahTingkat: 'Kota',      // Default Kota
         kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
+        page: 1
       });
     }
   }, [setSelectedLocation, setSelectedRegion, setSearchQuery, updateFilters]);
   
   // Create Jakarta Selatan filter label if no specific filters are applied
-  const isDefaultJakselView = !searchQuery && 
+  const isDefaultJakselView = !localSearchQuery && 
     (!selectedRegion || selectedRegion.id === 'all') && 
     !selectedLocation;
   
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-      <div className="flex flex-col md:flex-row gap-3 justify-between mb-4">
-        {/* Search with debouncing */}
+      <form onSubmit={handleSearchSubmit} className="flex flex-col md:flex-row gap-3 justify-between mb-4">
+        {/* Search input wrapped in form for submit handling */}
         <div className="relative flex-grow">
           <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
           <input
             type="text"
             placeholder="Cari paket..."
             value={localSearchQuery}
-            onChange={(e) => setLocalSearchQuery(e.target.value)}
+            onChange={handleSearchChange}
             className="pl-9 pr-4 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          <button type="submit" className="sr-only">Cari</button>
         </div>
-        
+         {/* Location Search and Region Dropdown */}
+      <div className="relative flex-grow">
+        <AutocompleteSearch onLocationSelect={handleLocationSelect} />
+        <RegionDropdown selectedRegion={selectedRegion} setSelectedRegion={handleRegionSelect} />
+      </div>
+      
+      {/* Active filter indicator */}
         {/* Action Buttons */}
         <div className="flex gap-2">
-          <button className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50">
+          <button type="button" className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50">
             <Filter size={16} />
             <span>Filter</span>
           </button>
           
           <button 
+            type="button"
             className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50"
             onClick={handleExportData}
           >
@@ -194,9 +243,10 @@ export default function FilterBar({
             <span>Export</span>
           </button>
           
-          {/* Year Dropdown - Updated with direct filter updating */}
+          {/* Year Dropdown */}
           <div className="relative">
             <button 
+              type="button"
               className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50"
               onClick={() => setShowYearDropdown(!showYearDropdown)}
             >
@@ -209,6 +259,7 @@ export default function FilterBar({
                 {years.map(year => (
                   <button 
                     key={year}
+                    type="button"
                     onClick={() => handleYearChange(year)}
                     className={`block w-full text-left px-4 py-2 hover:bg-gray-100 ${
                       year === filterYear ? 'bg-gray-50 font-medium' : ''
@@ -221,19 +272,12 @@ export default function FilterBar({
             )}
           </div>
         </div>
-      </div>
+      </form>
       
-      {/* Location Search and Region Dropdown */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <AutocompleteSearch onLocationSelect={handleLocationSelect} />
-        <RegionDropdown selectedRegion={selectedRegion} setSelectedRegion={handleRegionSelect} />
-      </div>
-      
-      {/* Active Location Filter Indicator */}
+     
       {isDefaultJakselView ? (
         <div className="mt-2 text-sm text-gray-500">
           Filter lokasi default: Kota Jakarta Selatan
-          {/* No reset button needed for default view */}
         </div>
       ) : (selectedRegion && selectedRegion.id !== 'all') || selectedLocation ? (
         <div className="mt-2 text-sm text-gray-500">
@@ -243,6 +287,16 @@ export default function FilterBar({
             className="ml-2 text-blue-500 hover:underline"
           >
             Reset ke Jakarta Selatan
+          </button>
+        </div>
+      ) : localSearchQuery ? (
+        <div className="mt-2 text-sm text-gray-500">
+          Pencarian aktif: "{localSearchQuery}"
+          <button 
+            onClick={handleResetFilter}
+            className="ml-2 text-blue-500 hover:underline"
+          >
+            Reset pencarian
           </button>
         </div>
       ) : null}

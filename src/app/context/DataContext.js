@@ -1,4 +1,3 @@
-// src/app/context/DataContext.js - Anti-Loop Version
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
@@ -7,7 +6,7 @@ import {
   getChartData, 
   getFilteredPackages, 
   getRegionsList,
-  getPackageCount  // Import the count function
+  getPackageCount
 } from '@/app/apiService';
 
 // Create context
@@ -18,7 +17,7 @@ export function useData() {
   const context = useContext(DataContext);
   if (!context) {
     console.error('useData must be used within a DataProvider');
-    // Return empty data instead of dummy data
+    // Return empty data
     return {
       dashboardStats: {},
       chartData: { pie: [], bar: [] },
@@ -34,7 +33,6 @@ export function useData() {
         charts: false,
         table: false
       },
-      // Provide no-op functions
       updateFilters: () => {},
       fetchAllDashboardData: () => Promise.resolve()
     };
@@ -46,9 +44,10 @@ export function useData() {
 export function DataProvider({ children }) {
   // Refs to prevent loops
   const isMountedRef = useRef(false);
-  const lastFetchTimeRef = useRef(0);
   const pendingFetchRef = useRef(null);
   const dataFetchedRef = useRef(false);
+  const isUpdatingRef = useRef(false);
+  const lastFetchTimeRef = useRef(0);
   
   // Debug logger
   const logDebug = useCallback((message, data) => {
@@ -78,25 +77,21 @@ export function DataProvider({ children }) {
     regions: [],
   });
   
-  // Global filters state
+  // Global filters state with Jakarta Selatan as default
   const [filters, setFilters] = useState({
     searchQuery: '',
-    year: '2025',
+    year: 2025,
     regionId: null,
-    provinsi: 'DKI Jakarta',    // Default Jakarta
-    daerahTingkat: 'Kota',      // Default Kota
-    kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
-    minPagu: null,
-    maxPagu: null,
-    metode: null,
-    jenisPengadaan: null,
+    provinsi: 'DKI Jakarta',
+    daerahTingkat: 'Kota',
+    kotaKab: 'Jakarta Selatan',
     page: 1,
     limit: 10
   });
 
   // Loading state
   const [loadingState, setLoadingState] = useState({
-    initial: true,   // Initial loading state
+    initial: true,    // Initial loading state
     dashboard: false, // All dashboard data
     regions: false,   // Region list
     stats: false,     // Dashboard stats
@@ -107,122 +102,10 @@ export function DataProvider({ children }) {
   // Error state
   const [error, setError] = useState({
     dashboard: null,
-    regions: null
+    regions: null,
+    table: null,
+    charts: null
   });
-
-  // Load regions on initial render - only once
-  useEffect(() => {
-    // Only run once
-    if (isMountedRef.current) return;
-    isMountedRef.current = true;
-    
-    logDebug('Loading regions (first mount)');
-    
-    const loadRegions = async () => {
-      setLoadingState(prev => ({ ...prev, regions: true }));
-      
-      try {
-        // Use the API service function
-        const data = await getRegionsList();
-        
-        // Add "all" option
-        const allOption = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
-        
-        setDashboardData(prev => ({
-          ...prev,
-          regions: [allOption, ...data]
-        }));
-        
-        setError(prev => ({ ...prev, regions: null }));
-      } catch (error) {
-        console.error('Error loading regions:', error);
-        setError(prev => ({ ...prev, regions: error.message }));
-        
-        // Set empty regions instead of dummy data
-        setDashboardData(prev => ({
-          ...prev,
-          regions: [{ id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 }]
-        }));
-      } finally {
-        setLoadingState(prev => ({ ...prev, regions: false }));
-      }
-    };
-    
-    loadRegions();
-  }, [logDebug]); // Empty dependency array so it only runs once
-
-  // Helper function to fetch dashboard stats
-  const fetchDashboardStats = useCallback(async (currentFilters = null) => {
-    const filtersToUse = currentFilters || filters;
-    
-    try {
-      const stats = await getDashboardStats(filtersToUse);
-      
-      // Update state with fetched data
-      setDashboardData(prev => ({
-        ...prev,
-        stats
-      }));
-      
-      return stats;
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-      // Don't change the current stats on error
-      return dashboardData.stats;
-    }
-  }, [filters, dashboardData.stats]);
-
-  // Helper function to fetch chart data
-  const fetchChartData = useCallback(async (chartType, currentFilters = null) => {
-    const filtersToUse = currentFilters || filters;
-    
-    try {
-      const data = await getChartData(chartType, filtersToUse);
-      
-      // Update state with fetched data
-      setDashboardData(prev => ({
-        ...prev,
-        charts: {
-          ...prev.charts,
-          [chartType]: data
-        }
-      }));
-      
-      return data;
-    } catch (error) {
-      console.error(`Error fetching ${chartType} chart:`, error);
-      // Return current chart data on error
-      return dashboardData.charts[chartType];
-    }
-  }, [filters, dashboardData.charts]);
-
-  // Format wilayah from item data
-  const formatWilayah = useCallback((item) => {
-    if (item.lokasi) return item.lokasi;
-    
-    if (item.provinsi) {
-      let result = '';
-      if (item.daerah_tingkat) result += `${item.daerah_tingkat} `;
-      if (item.kota_kab) result += item.kota_kab;
-      if (result) result += `, ${item.provinsi}`;
-      else result = item.provinsi;
-      return result;
-    }
-    
-    return '';
-  }, []);
-
-  // Determine status based on item data
-  const determineStatus = useCallback((item) => {
-    const currentDate = new Date();
-    const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
-    
-    if (!itemDate) return 'Sesuai';
-    
-    if (itemDate < currentDate) return 'Hrge Esak Btorch';
-    if (item.is_pdn === false) return 'Dibth Flnxnnm';
-    return 'Sesuai';
-  }, []);
 
   // Calculate total items for pagination
   const calculateTotalItems = useCallback((data, page, limit, currentTotal) => {
@@ -257,49 +140,160 @@ export function DataProvider({ children }) {
     // Default: Keep the current total if higher, or calculate based on what we know
     return Math.max(currentTotal || 0, page * limit);
   }, []);
-  
-  // Function to fetch just the total count of items
-  const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
+
+  // Load regions on initial render - only once
+  useEffect(() => {
+    // Only run once
+    if (isMountedRef.current) return;
+    isMountedRef.current = true;
+    
+    logDebug('Loading regions (first mount)');
+    
+    const loadRegions = async () => {
+      setLoadingState(prev => ({ ...prev, regions: true }));
+      
+      try {
+        // Use the API service function
+        const data = await getRegionsList();
+        
+        // Add "all" option
+        const allOption = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
+        
+        setDashboardData(prev => ({
+          ...prev,
+          regions: [allOption, ...data]
+        }));
+        
+        setError(prev => ({ ...prev, regions: null }));
+      } catch (error) {
+        console.error('Error loading regions:', error);
+        setError(prev => ({ ...prev, regions: error.message }));
+        
+        // Set empty regions
+        setDashboardData(prev => ({
+          ...prev,
+          regions: [{ id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 }]
+        }));
+      } finally {
+        setLoadingState(prev => ({ ...prev, regions: false }));
+      }
+    };
+    
+    loadRegions();
+  }, [logDebug]);
+
+  // Helper function to fetch dashboard stats
+  const fetchDashboardStats = useCallback(async (currentFilters = null) => {
     const filtersToUse = currentFilters || filters;
     
     try {
-      logDebug('Fetching total item count for all records', filtersToUse);
+      setLoadingState(prev => ({ ...prev, stats: true }));
+      const stats = await getDashboardStats(filtersToUse);
       
-      // Using the imported getPackageCount function
-      const totalCount = await getPackageCount(filtersToUse);
-      
-      logDebug('API returned total count', totalCount);
-      
-      // Update dashboard data with the exact total count
+      // Update state with fetched data
       setDashboardData(prev => ({
         ...prev,
-        table: {
-          ...prev.table,
-          totalItems: totalCount
-        }
+        stats
       }));
       
-      return totalCount;
+      setError(prev => ({ ...prev, stats: null }));
+      return stats;
     } catch (error) {
-      console.error('Error fetching total item count:', error);
+      console.error('Error fetching stats:', error);
+      setError(prev => ({ ...prev, stats: error.message }));
+      return dashboardData.stats;
+    } finally {
+      setLoadingState(prev => ({ ...prev, stats: false }));
+    }
+  }, [filters, dashboardData.stats]);
+
+  // Helper function to fetch chart data
+  const fetchChartData = useCallback(async (chartType, currentFilters = null) => {
+    const filtersToUse = currentFilters || filters;
+    
+    try {
+      setLoadingState(prev => ({ ...prev, charts: true }));
+      const data = await getChartData(chartType, filtersToUse);
       
-      // On error, use a high default value rather than the current count
-      // This ensures pagination works even if we can't get the exact count
-      const fallbackCount = 1500;
-      
+      // Update state with fetched data
       setDashboardData(prev => ({
         ...prev,
-        table: {
-          ...prev.table,
-          totalItems: fallbackCount
+        charts: {
+          ...prev.charts,
+          [chartType]: data
         }
       }));
       
-      return fallbackCount;
+      setError(prev => ({ ...prev, charts: null }));
+      return data;
+    } catch (error) {
+      console.error(`Error fetching ${chartType} chart:`, error);
+      setError(prev => ({ ...prev, charts: error.message }));
+      return dashboardData.charts[chartType];
+    } finally {
+      setLoadingState(prev => ({ ...prev, charts: false }));
     }
-  }, [filters, logDebug]);
+  }, [filters, dashboardData.charts]);
 
-  // Enhanced function to fetch table data with better pagination handling
+  // Format wilayah from item data
+  const formatWilayah = useCallback((item) => {
+    if (item.lokasi) return item.lokasi;
+    
+    if (item.provinsi) {
+      let result = '';
+      if (item.daerah_tingkat) result += `${item.daerah_tingkat} `;
+      if (item.kota_kab) result += item.kota_kab;
+      if (result) result += `, ${item.provinsi}`;
+      else result = item.provinsi;
+      return result;
+    }
+    
+    return '';
+  }, []);
+
+  // Determine status based on item data
+  const determineStatus = useCallback((item) => {
+    const currentDate = new Date();
+    const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
+    
+    if (!itemDate) return 'Sesuai';
+    
+    if (itemDate < currentDate) return 'Hrge Esak Btorch';
+    if (item.is_pdn === false) return 'Dibth Flnxnnm';
+    return 'Sesuai';
+  }, []);
+
+  // Function to fetch just the total count of items
+const fetchTotalItemCount = useCallback(async (currentFilters = null) => {
+  const filtersToUse = currentFilters || filters;
+  
+  try {
+    logDebug('Fetching total item count for all records', filtersToUse);
+    
+    // Using the imported getPackageCount function
+    const totalCount = await getPackageCount(filtersToUse);
+    
+    logDebug('API returned total count', totalCount);
+    
+    // Update dashboard data with the exact total count
+    setDashboardData(prev => ({
+      ...prev,
+      table: {
+        ...prev.table,
+        totalItems: totalCount
+      }
+    }));
+    
+    return totalCount;
+  } catch (error) {
+    console.error('Error fetching total item count:', error);
+    
+    // Jangan mengganti totalItems jika terjadi error, pertahankan nilai sebelumnya
+    return dashboardData.table.totalItems || 0;
+  }
+}, [filters, logDebug, dashboardData.table.totalItems]);
+
+  // Enhanced function to fetch table data
   const fetchTableData = useCallback(async (page = 1, limit = 10, currentFilters = null) => {
     const filtersToUse = currentFilters || filters;
     
@@ -317,6 +311,11 @@ export function DataProvider({ children }) {
       logDebug('Fetching table data with pagination:', { page, limit, filters: tableFilters });
       
       const data = await getFilteredPackages(tableFilters);
+      
+      if (!Array.isArray(data)) {
+        logDebug('Received non-array data from API:', data);
+        return dashboardData.table.data;
+      }
       
       // Process table data
       const processedData = data.map((item, index) => ({
@@ -360,82 +359,88 @@ export function DataProvider({ children }) {
     } finally {
       setLoadingState(prev => ({ ...prev, table: false }));
     }
-  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, getFilteredPackages, logDebug]);
+  }, [filters, dashboardData.table, formatWilayah, determineStatus, calculateTotalItems, logDebug]);
 
-  // Single function to fetch all dashboard data in one go
-  // With debounce and loop prevention
-  const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
-    // Use current filters if not provided
-    const filtersToUse = currentFilters || filters;
+  // Tambahkan fungsi ini di dalam DataContext.js dalam Provider component:
+
+// Function to fetch all dashboard data in one go
+// With debounce and loop prevention
+const fetchAllDashboardData = useCallback(async (currentFilters = null) => {
+  // Use current filters if not provided
+  const filtersToUse = currentFilters || filters;
+  
+  // Log the filters we're using
+  console.log('[DataContext] Fetching all dashboard data with filters:', filtersToUse);
+  
+  // Check if there's already a fetch in progress
+  if (pendingFetchRef.current) {
+    logDebug('Fetch already in progress, skipping', { filters: filtersToUse });
+    return null;
+  }
+  
+  // Debounce fetches - don't fetch more often than every 500ms
+  const now = Date.now();
+  if (now - lastFetchTimeRef.current < 500) {
+    logDebug('Debouncing fetch, too soon since last fetch', {
+      timeSinceLast: now - lastFetchTimeRef.current,
+      filters: filtersToUse
+    });
+    return null;
+  }
+  
+  // Create a new pending promise
+  pendingFetchRef.current = (async () => {
+    logDebug('Starting fetch all dashboard data', { filters: filtersToUse });
+    lastFetchTimeRef.current = now;
     
-    // Check if there's already a fetch in progress
-    if (pendingFetchRef.current) {
-      logDebug('Fetch already in progress, skipping', { filters: filtersToUse });
-      return null;
-    }
+    // Set loading state
+    setLoadingState(prev => ({ 
+      ...prev, 
+      dashboard: true,
+      stats: true,
+      charts: true,
+      table: true
+    }));
     
-    // Debounce fetches - don't fetch more often than every 500ms
-    const now = Date.now();
-    if (now - lastFetchTimeRef.current < 500) {
-      logDebug('Debouncing fetch, too soon since last fetch', {
-        timeSinceLast: now - lastFetchTimeRef.current,
-        filters: filtersToUse
-      });
-      return null;
-    }
-    
-    // Create a new pending promise
-    pendingFetchRef.current = (async () => {
-      logDebug('Starting fetch all dashboard data', { filters: filtersToUse });
-      lastFetchTimeRef.current = now;
+    try {
+      // First fetch the total count to ensure accurate pagination
+      await fetchTotalItemCount(filtersToUse);
       
-      // Set loading state
+      // Then fetch all other data in parallel to reduce overall loading time
+      const [stats, pieData, barData, tableData] = await Promise.all([
+        fetchDashboardStats(filtersToUse),
+        fetchChartData('pie', filtersToUse),
+        fetchChartData('bar', filtersToUse),
+        fetchTableData(filtersToUse.page, filtersToUse.limit, filtersToUse)
+      ]);
+      
+      dataFetchedRef.current = true;
+      
+      // Success - error will be null
+      setError(prev => ({ ...prev, dashboard: null }));
+      
+      return { stats, pieData, barData, tableData };
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+      setError(prev => ({ ...prev, dashboard: error.message }));
+      return null;
+    } finally {
       setLoadingState(prev => ({ 
         ...prev, 
-        dashboard: true,
-        stats: true,
-        charts: true,
-        table: true
+        dashboard: false,
+        stats: false,
+        charts: false,
+        table: false,
+        initial: false // Clear initial loading state
       }));
-      
-      try {
-        // First fetch the total count to ensure accurate pagination
-        await fetchTotalItemCount(filtersToUse);
-        
-        // Then fetch all other data in parallel to reduce overall loading time
-        const [stats, pieData, barData, tableData] = await Promise.all([
-          fetchDashboardStats(filtersToUse),
-          fetchChartData('pie', filtersToUse),
-          fetchChartData('bar', filtersToUse),
-          fetchTableData(filtersToUse.page, filtersToUse.limit, filtersToUse)
-        ]);
-        
-        dataFetchedRef.current = true;
-        
-        // Success - error will be null
-        setError(prev => ({ ...prev, dashboard: null }));
-        
-        return { stats, pieData, barData, tableData };
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-        setError(prev => ({ ...prev, dashboard: error.message }));
-        return null;
-      } finally {
-        setLoadingState(prev => ({ 
-          ...prev, 
-          dashboard: false,
-          stats: false,
-          charts: false,
-          table: false,
-          initial: false // Clear initial loading state
-        }));
-        pendingFetchRef.current = null;
-      }
-    })();
-    
-    return pendingFetchRef.current;
-  }, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
+      pendingFetchRef.current = null;
+    }
+  })();
+  
+  return pendingFetchRef.current;
+}, [filters, fetchTotalItemCount, fetchDashboardStats, fetchChartData, fetchTableData, logDebug]);
 
+  // Main function to update filters with loop prevention
   const updateFilters = useCallback((newFilters) => {
     // Debug log
     logDebug('updateFilters called with', newFilters);
@@ -459,7 +464,7 @@ export function DataProvider({ children }) {
       else if (newFilters[key] !== filters[key]) {
         updatedFilters[key] = newFilters[key];
         hasChanged = true;
-        // If searchQuery changed, mark as significant change
+        // If searchQuery or location filters changed, mark as significant change
         if (key === 'searchQuery' || key === 'regionId' || key === 'provinsi' || 
             key === 'daerahTingkat' || key === 'kotaKab') {
           hasChangedPageOnly = false;
@@ -480,8 +485,9 @@ export function DataProvider({ children }) {
       updatedFilters.page = 1;
     }
     
-    // Update filters state
+    // Update filters state immediately
     setFilters(updatedFilters);
+    logDebug('Filter state updated to', updatedFilters);
     
     // Schedule fetch for next tick to avoid potential loops
     setTimeout(() => {
@@ -491,16 +497,17 @@ export function DataProvider({ children }) {
         const pageToFetch = newFilters.page || filters.page || 1;
         const limitToUse = filters.limit || 10;
         
+        logDebug(`Fetching table data for page ${pageToFetch}`);
         fetchTableData(pageToFetch, limitToUse, updatedFilters);
       } else {
         // Other filters changed, fetch all data
+        logDebug('Fetching all dashboard data with updated filters');
         fetchAllDashboardData(updatedFilters);
       }
     }, 0);
     
     return updatedFilters;
   }, [filters, fetchAllDashboardData, fetchTableData, logDebug]);
-  
 
   // Initial data loading (only once)
   useEffect(() => {
@@ -539,9 +546,7 @@ export function DataProvider({ children }) {
     // Functions
     updateFilters,
     fetchAllDashboardData,
-    fetchTotalItemCount, // Add this new function
-    
-    // Individual data fetching functions for compatibility
+    fetchTotalItemCount,
     fetchDashboardStats,
     fetchChartData,
     fetchTableData
@@ -552,7 +557,7 @@ export function DataProvider({ children }) {
     error,
     updateFilters,
     fetchAllDashboardData,
-    fetchTotalItemCount, // Include in dependency array
+    fetchTotalItemCount,
     fetchDashboardStats,
     fetchChartData,
     fetchTableData

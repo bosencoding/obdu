@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
-import { MapPin, ChevronDown, Loader } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { MapPin, ChevronDown, Loader, Search } from 'lucide-react';
 import { getRegionsList } from '@/app/apiService';
 
 export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
   const [isOpen, setIsOpen] = useState(false);
   const [regions, setRegions] = useState([]);
+  const [filteredRegions, setFilteredRegions] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const dropdownRef = useRef(null);
 
   // Default "Semua Wilayah" option
   const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
@@ -19,6 +22,7 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
     count: 542
   };
 
+  // Fetch regions on component mount
   useEffect(() => {
     async function fetchRegions() {
       setIsLoading(true);
@@ -40,12 +44,16 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
         }
         
         // Add default "Semua Wilayah" option
-        setRegions([defaultRegion, ...data]);
+        const allRegions = [defaultRegion, ...data];
+        setRegions(allRegions);
+        setFilteredRegions(allRegions);
       } catch (err) {
         console.error('Error fetching regions:', err);
         setError('Gagal memuat data wilayah');
         // Provide fallback data with Jakarta Selatan
-        setRegions([defaultRegion, jakartaSelatanRegion]);
+        const fallbackRegions = [defaultRegion, jakartaSelatanRegion];
+        setRegions(fallbackRegions);
+        setFilteredRegions(fallbackRegions);
       } finally {
         setIsLoading(false);
       }
@@ -68,8 +76,43 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
     }
   }, [regions, selectedRegion, setSelectedRegion]);
 
+  // Filter regions based on search term
+  useEffect(() => {
+    if (searchTerm.trim() === '') {
+      setFilteredRegions(regions);
+    } else {
+      const term = searchTerm.toLowerCase();
+      const filtered = regions.filter(region => 
+        region.id === 'all' || // Always include "Semua Wilayah"
+        region.name.toLowerCase().includes(term) || 
+        (region.provinsi && region.provinsi.toLowerCase().includes(term)) ||
+        (region.type && region.type.toLowerCase().includes(term))
+      );
+      setFilteredRegions(filtered);
+    }
+  }, [searchTerm, regions]);
+
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   const toggleDropdown = () => {
     setIsOpen(!isOpen);
+    if (!isOpen) {
+      // Reset search term when opening dropdown
+      setSearchTerm('');
+      setFilteredRegions(regions);
+    }
   };
 
   const selectRegion = (region) => {
@@ -82,8 +125,12 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
     }
   };
 
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
   return (
-    <div className="relative">
+    <div className="relative" ref={dropdownRef}>
       <button 
         onClick={toggleDropdown}
         className="flex items-center gap-1 px-3 py-2 border border-gray-300 rounded-md bg-white hover:bg-gray-50 w-full"
@@ -102,31 +149,52 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
       
       {isOpen && (
         <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-300 rounded-md shadow-lg z-20 max-h-80 overflow-y-auto">
+          {/* Search input */}
+          <div className="sticky top-0 bg-white p-2 border-b border-gray-200">
+            <div className="relative">
+              <Search size={14} className="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={handleSearchChange}
+                placeholder="Cari wilayah..."
+                className="w-full pl-8 pr-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                autoFocus
+              />
+            </div>
+          </div>
+          
           {error && (
             <div className="px-4 py-2 text-sm text-red-500">{error}</div>
           )}
           
-          {regions.map(region => (
-            <button 
-              key={region.id}
-              onClick={() => selectRegion(region)}
-              className={`block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${
-                selectedRegion?.id === region.id ? 'bg-gray-50' : ''
-              }`}
-            >
-              <div className="flex justify-between items-center">
-                <span className={region.id === 'all' ? 'font-medium' : ''}>{region.name}</span>
-                {region.count > 0 && (
-                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                    {region.count}
-                  </span>
+          {filteredRegions.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-gray-500 text-center">
+              Tidak ditemukan wilayah yang sesuai
+            </div>
+          ) : (
+            filteredRegions.map(region => (
+              <button 
+                key={region.id}
+                onClick={() => selectRegion(region)}
+                className={`block w-full text-left px-4 py-2 hover:bg-gray-100 text-sm ${
+                  selectedRegion?.id === region.id ? 'bg-gray-50' : ''
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <span className={region.id === 'all' ? 'font-medium' : ''}>{region.name}</span>
+                  {region.count > 0 && (
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                      {region.count}
+                    </span>
+                  )}
+                </div>
+                {region.provinsi && region.id !== 'all' && (
+                  <div className="text-xs text-gray-500">{region.provinsi}</div>
                 )}
-              </div>
-              {region.provinsi && region.id !== 'all' && (
-                <div className="text-xs text-gray-500">{region.provinsi}</div>
-              )}
-            </button>
-          ))}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>

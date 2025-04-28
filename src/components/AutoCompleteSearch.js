@@ -1,3 +1,4 @@
+// src/components/AutoCompleteSearch.js
 import { useState, useEffect, useRef } from 'react';
 import { Search, X } from 'lucide-react';
 import { searchLocations } from '@/app/apiService';
@@ -10,6 +11,7 @@ export default function AutocompleteSearch({ onLocationSelect }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const searchRef = useRef(null);
+  const searchTimeoutRef = useRef(null);
 
   // Fetch locations when search term changes
   useEffect(() => {
@@ -21,8 +23,10 @@ export default function AutocompleteSearch({ onLocationSelect }) {
       
       setIsLoading(true);
       try {
+        console.log(`Searching locations for: "${searchTerm}"`);
         // Use the API service function
         const data = await searchLocations(searchTerm);
+        console.log('Locations found:', data.length);
         setFilteredLocations(data);
       } catch (error) {
         console.error('Error fetching locations:', error);
@@ -32,12 +36,21 @@ export default function AutocompleteSearch({ onLocationSelect }) {
       }
     };
     
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
     // Debounce the search to avoid too many API calls
-    const timer = setTimeout(() => {
+    searchTimeoutRef.current = setTimeout(() => {
       fetchLocationsData();
     }, 300);
     
-    return () => clearTimeout(timer);
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
   }, [searchTerm]);
 
   // Handle click outside to close suggestions
@@ -57,12 +70,17 @@ export default function AutocompleteSearch({ onLocationSelect }) {
   const handleSearchChange = (e) => {
     const value = e.target.value;
     setSearchTerm(value);
+    
     if (value.trim() !== '') {
       setShowSuggestions(true);
     } else {
       setShowSuggestions(false);
     }
-    setSelectedLocation(null);
+    
+    // Clear selected location when search changes
+    if (selectedLocation) {
+      setSelectedLocation(null);
+    }
   };
 
   const handleClearSearch = () => {
@@ -77,6 +95,7 @@ export default function AutocompleteSearch({ onLocationSelect }) {
   };
 
   const handleSelectLocation = (location) => {
+    console.log('Selecting location:', location);
     setSelectedLocation(location);
     setSearchTerm(location.name);
     setShowSuggestions(false);
@@ -87,27 +106,44 @@ export default function AutocompleteSearch({ onLocationSelect }) {
     }
   };
 
+  // Handle form submission to prevent default behavior
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    // If only one location exists in filteredLocations, select it
+    if (filteredLocations.length === 1 && !selectedLocation) {
+      handleSelectLocation(filteredLocations[0]);
+    }
+    
+    // Hide suggestions
+    setShowSuggestions(false);
+  };
+
   return (
     <div className="relative" ref={searchRef}>
-      <div className="relative flex items-center">
-        <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-        <input
-          type="text"
-          placeholder="Cari kota, kabupaten, atau provinsi..."
-          value={searchTerm}
-          onChange={handleSearchChange}
-          onFocus={() => searchTerm.trim() !== '' && setShowSuggestions(true)}
-          className="pl-9 pr-9 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        {searchTerm && (
-          <button 
-            onClick={handleClearSearch}
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            <X size={16} />
-          </button>
-        )}
-      </div>
+      {/* <form onSubmit={handleSubmit}>
+        <div className="relative flex items-center">
+          <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Cari kota, kabupaten, atau provinsi..."
+            value={searchTerm}
+            onChange={handleSearchChange}
+            onFocus={() => searchTerm.trim() !== '' && setShowSuggestions(true)}
+            className="pl-9 pr-9 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          {searchTerm && (
+            <button 
+              type="button"
+              onClick={handleClearSearch}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <X size={16} />
+            </button>
+          )}
+          <button type="submit" className="sr-only">Cari</button>
+        </div>
+      </form> */}
       
       {isLoading && (
         <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-md shadow-lg p-4 text-center text-gray-500">
@@ -120,6 +156,7 @@ export default function AutocompleteSearch({ onLocationSelect }) {
           {filteredLocations.map(location => (
             <button
               key={location.id}
+              type="button"
               onClick={() => handleSelectLocation(location)}
               className="block w-full text-left px-4 py-2 hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
             >

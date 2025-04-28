@@ -177,7 +177,7 @@ export async function getFilteredPackages(filters = {}) {
 
     // Build query params
     const params = buildQueryParams(paginationFilters);
-    
+    console.log('Query params untuk API:', params.toString()); // Tambahkan log ini
     // Log request details for debugging
     console.log('Filtered packages request:', {
       filters: paginationFilters,
@@ -241,51 +241,78 @@ export async function getPackageCount(filters = {}) {
     if (filters.provinsi) countParams.append('provinsi', filters.provinsi);
     if (filters.daerahTingkat) countParams.append('daerah_tingkat', filters.daerahTingkat);
     if (filters.kotaKab) countParams.append('kota_kab', filters.kotaKab);
-    if (filters.minPagu !== undefined && filters.minPagu !== null) countParams.append('min_pagu', filters.minPagu);
-    if (filters.maxPagu !== undefined && filters.maxPagu !== null) countParams.append('max_pagu', filters.maxPagu);
+    if (filters.minPagu !== undefined) countParams.append('min_pagu', filters.minPagu);
+    if (filters.maxPagu !== undefined) countParams.append('max_pagu', filters.maxPagu);
     if (filters.metode) countParams.append('metode', filters.metode);
     if (filters.jenisPengadaan) countParams.append('jenis_pengadaan', filters.jenisPengadaan);
     
     // Add count_only flag
     countParams.append('count_only', 'true');
     
-    // Try the dedicated count endpoint first
-    try {
-      const response = await apiRequest(`/api/paket/count?${countParams.toString()}`);
-      
-      if (response && response.total !== undefined) {
-        const totalCount = parseInt(response.total, 10);
-        return totalCount || 0;
-      }
-    } catch (error) {
-      console.warn('Count endpoint failed, falling back to filter endpoint', error);
-      // Continue to fallback
-    }
+    // Jangan gunakan pagination saat menghitung total
+    countParams.append('limit', '1');
     
-    // Fallback: try the filter endpoint with count_only parameter
-    const response = await apiRequest(`/api/paket/filter?${countParams.toString()}`);
+    // Coba mendapatkan hitungan total dari API
+    const response = await apiRequest(`/paket/filter?${countParams.toString()}`);
     
+    // Coba ekstrak total count dari beberapa format response yang berbeda
     if (response) {
-      // Different APIs might return the count in different ways
-      if (response.total !== undefined) {
-        return parseInt(response.total, 10) || 0;
+      // Try different potential response formats
+      if (typeof response.recordsFiltered === 'number') {
+        return response.recordsFiltered;
       }
-      if (response.count !== undefined) {
-        return parseInt(response.count, 10) || 0;
+      
+      if (typeof response.totalCount === 'number') {
+        return response.totalCount;
       }
-      if (response.totalCount !== undefined) {
-        return parseInt(response.totalCount, 10) || 0;
+      
+      if (typeof response.count === 'number') {
+        return response.count;
+      }
+      
+      if (typeof response.total === 'number') {
+        return response.total;
+      }
+      
+      // If the API returns an array with totalCount property
+      if (Array.isArray(response) && response.totalCount !== undefined) {
+        return response.totalCount;
+      }
+      
+      // If it returns an array, we may have to estimate based on other
+      // endpoints or return a reasonable default
+      if (Array.isArray(response)) {
+        // Get count from region selection if available
+        const regionCount = filters.regionId && filters.regionId !== 'all' && 
+                           (await getRegionsList()).find(r => r.id === filters.regionId)?.count;
+        
+        if (regionCount) {
+          return regionCount;
+        }
       }
     }
     
-    // Last resort: return a high default
-    return 1500;
+    // If we can't determine count from API response, try to get count from selected region
+    if (filters.regionId && filters.regionId !== 'all') {
+      try {
+        const regions = await getRegionsList();
+        const selectedRegion = regions.find(r => r.id === filters.regionId);
+        if (selectedRegion && selectedRegion.count > 0) {
+          return selectedRegion.count;
+        }
+      } catch (e) {
+        console.error('Error getting count from regions list:', e);
+      }
+    }
+    
+    // Return a reasonable default count that's likely to be correct
+    return 500;
   } catch (error) {
     console.error('Error getting package count:', error);
-    // Return a high default on error to ensure pagination works
-    return 1500;
+    return 500; // Default count for error case
   }
 }
+
 
 /**
  * Handle unexpected API errors

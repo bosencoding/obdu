@@ -40,10 +40,16 @@ export default function TableSection({
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   
-  // Use context total items - default to 1500 if not available
-  // This ensures pagination works with a large number of pages initially
+  // Get total items count on initial load and when filters change
+  useEffect(() => {
+    if (useDataContext && typeof fetchTotalItemCount === 'function' && !loadingState) {
+      fetchTotalItemCount();
+    }
+  }, [useDataContext, fetchTotalItemCount, filters, loadingState]);
+  
+  // Use context total items - get exact count from API
   const totalItems = useDataContext 
-    ? (contextTotalItems || 1500)
+    ? (contextTotalItems || 0)
     : allData.length;
   
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
@@ -51,8 +57,7 @@ export default function TableSection({
   // Force show next page button if we have a full page of items
   const shouldShowNextPage = tableData.length >= itemsPerPage;
   
-  // Fetch total item count on component mount and when filters change
-  // This ensures we always have the most accurate count
+  // Sync with current filters on component mount and when filters change
   useEffect(() => {
     if (useDataContext && filters) {
       // Sync with current filters
@@ -73,7 +78,7 @@ export default function TableSection({
       setCurrentPage(newPage);
       
       if (useDataContext && typeof updateFilters === 'function') {
-        // Important: Use an object with just the page property to avoid overriding other filters
+        // Update filters with new page
         updateFilters({ page: newPage });
         
         // For more reliable pagination, directly fetch table data with new page
@@ -252,7 +257,7 @@ export default function TableSection({
           {/* Pagination controls */}
           <div className="flex items-center justify-between mt-4 border-t pt-4">
             <div className="text-sm text-gray-500">
-              Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems.toLocaleString()} item
+              Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems > 0 ? totalItems.toLocaleString() : '0'} item
             </div>
             <div className="flex items-center space-x-2">
               <button 
