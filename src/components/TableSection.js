@@ -85,12 +85,31 @@ export default function TableSection({
     }
   }, [useDataContext, updateFilters, fetchTableData, totalPages, itemsPerPage, currentPage, shouldShowNextPage]);
   
+<<<<<<< Updated upstream
   // Sinkronkan halaman lokal dengan halaman context saat filter berubah
   useEffect(() => {
     if (useDataContext && filters?.page && filters.page !== currentPage) {
       setCurrentPage(filters.page);
     }
   }, [filters, currentPage, useDataContext]);
+=======
+  // Calculate current page data slice (for non-context mode)
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const displayData = useDataContext
+    ? tableData
+    : allData.slice(startIndex, endIndex).map((item, index) => ({
+        no: startIndex + index + 1,
+        nama: item.paket || item.nama || '-',
+        satuan: item.satuan_kerja || item.satuan || '-',
+        krema: item.metode || item.krema || '-',
+        jadwal: item.pemilihan || item.jadwal || 'Belum ditentukan',
+        status: item.status || determineStatus(item),
+        keterangan: item.keterangan || item.jenis_pengadaan || '-',
+        wilayah: item.wilayah || item.lokasi || formatWilayah(item),
+        pagu: item.pagu || '-' // Corrected pagu field name
+      }));
+>>>>>>> Stashed changes
   
   // Generate array nomor halaman untuk ditampilkan
   const getPageNumbers = useCallback(() => {

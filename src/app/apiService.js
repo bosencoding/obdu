@@ -285,6 +285,21 @@ export async function getPackageCount(filters = {}) {
   }
 }
 
+<<<<<<< Updated upstream
+=======
+/**
+ * Get detailed data for a single package by ID
+ * @param {string | number} id - The ID of the package
+ * @returns {Promise<Object>} - Detailed package data
+ */
+export async function getPackageDetails(id) {
+  if (!id) {
+    throw new Error('Package ID is required to fetch details.');
+  }
+  return apiRequest(`/data-sirup/${id}`); // Updated endpoint
+}
+
+>>>>>>> Stashed changes
 /**
  * Handle unexpected API errors
  * @param {Error} error - The error that occurred
@@ -308,5 +323,6 @@ export default {
   getChartData,
   getWilayahList,
   getPackageCount,
+  getPackageDetails, // Added getPackageDetails to export
   handleApiError
 };
