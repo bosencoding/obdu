@@ -1,14 +1,66 @@
 // app/api/[[...path]]/route.js
-// Simplified API Route Handler with robust error handling
+// Mock API implementation for development
 
 import { NextResponse } from 'next/server';
 
-// Backend API URL - pastikan URL ini benar dan dapat diakses
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Mock data for development
+const mockData = {
+  // Mock regions data
+  regions: [
+    { id: 'all', name: 'Semua Wilayah', count: 500 },
+    { id: 'region-jaksel', name: 'Kota Jakarta Selatan', provinsi: 'DKI Jakarta', type: 'Kota', count: 120 },
+    { id: 'region-jakpus', name: 'Kota Jakarta Pusat', provinsi: 'DKI Jakarta', type: 'Kota', count: 85 },
+    { id: 'region-jakbar', name: 'Kota Jakarta Barat', provinsi: 'DKI Jakarta', type: 'Kota', count: 95 },
+    { id: 'region-jaktim', name: 'Kota Jakarta Timur', provinsi: 'DKI Jakarta', type: 'Kota', count: 110 },
+    { id: 'region-jakut', name: 'Kota Jakarta Utara', provinsi: 'DKI Jakarta', type: 'Kota', count: 90 },
+    { id: 'province-jabar', name: 'Jawa Barat', count: 250 },
+    { id: 'province-jateng', name: 'Jawa Tengah', count: 200 },
+    { id: 'province-jatim', name: 'Jawa Timur', count: 230 }
+  ],
+  
+  // Mock dashboard stats
+  dashboardStats: {
+    totalAnggaran: "Rp 1.250.000.000.000",
+    totalPaket: 500,
+    tender: 150,
+    dikecualikan: 100,
+    epkem: 200,
+    pengadaanLangsung: 50
+  },
+  
+  // Mock chart data
+  chartData: {
+    pie: [
+      { name: 'Tender', value: 150 },
+      { name: 'Dikecualikan', value: 100 },
+      { name: 'e-Purchasing', value: 200 },
+      { name: 'Pengadaan Langsung', value: 50 }
+    ],
+    bar: [
+      { name: 'Barang', value: 200 },
+      { name: 'Jasa Konsultansi', value: 100 },
+      { name: 'Jasa Lainnya', value: 120 },
+      { name: 'Pekerjaan Konstruksi', value: 80 }
+    ]
+  },
+  
+  // Mock table data
+  tableData: Array.from({ length: 50 }, (_, i) => ({
+    id: `PKT-${2025}-${1000 + i}`,
+    nama_paket: `Paket Pengadaan ${i + 1}`,
+    pagu: Math.floor(Math.random() * 1000000000) + 10000000,
+    metode: ['Tender', 'e-Purchasing', 'Pengadaan Langsung', 'Dikecualikan'][Math.floor(Math.random() * 4)],
+    provinsi: 'DKI Jakarta',
+    daerah_tingkat: 'Kota',
+    kota_kab: 'Jakarta Selatan',
+    tahun: 2025,
+    status: ['Aktif', 'Selesai', 'Dibatalkan'][Math.floor(Math.random() * 3)]
+  }))
+};
 
 // Basic logging
 function logRequest(method, url, status, error = null) {
-  console.log(`[API Proxy] ${method} ${url} => ${status}${error ? ` (Error: ${error})` : ''}`);
+  console.log(`[Mock API] ${method} ${url} => ${status}${error ? ` (Error: ${error})` : ''}`);
 }
 
 /**
@@ -21,72 +73,82 @@ export async function GET(request, { params }) {
     const { pathname, search } = url;
     
     // Extract path parts after /api/
-    let backendPath = '';
-    if (params.path) {
-      backendPath = params.path.join('/');
+    let endpoint = '';
+    if (params && params.path) {
+      endpoint = params.path.join('/');
+    } else {
+      // Extract path from URL if params.path is not available
+      const apiPrefix = '/api/';
+      if (pathname.startsWith(apiPrefix)) {
+        endpoint = pathname.substring(apiPrefix.length);
+      }
     }
+    
+    // Parse query parameters
+    const queryParams = Object.fromEntries(new URLSearchParams(search));
     
     // Log request
-    const targetUrl = `${API_URL}/${backendPath}${search}`;
-    console.log(`[API Proxy] Forwarding GET: ${targetUrl}`);
+    console.log(`[Mock API] GET request for: ${endpoint}${search}`);
     
-    // Buat timeout untuk request
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+    // Handle different endpoints
+    let responseData;
     
-    // Buat request ke backend
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    
-    // Clear timeout
-    clearTimeout(timeoutId);
-    
-    // Jika response bukan 2xx, log detail error
-    if (!response.ok) {
-      const errorText = await response.text();
-      logRequest('GET', targetUrl, response.status, errorText);
+    if (endpoint === 'regions' || endpoint === 'regions/') {
+      responseData = mockData.regions;
+    }
+    else if (endpoint === 'dashboard/stats') {
+      responseData = mockData.dashboardStats;
+    }
+    else if (endpoint.startsWith('dashboard/chart/')) {
+      const chartType = endpoint.split('/').pop();
+      responseData = mockData.chartData[chartType] || [];
+    }
+    else if (endpoint === 'paket/filter') {
+      // Handle pagination
+      const page = parseInt(queryParams.page) || 1;
+      const limit = parseInt(queryParams.limit) || 10;
+      const skip = parseInt(queryParams.skip) || (page - 1) * limit;
       
-      return NextResponse.json(
-        { error: `Backend API returned status ${response.status}`, details: errorText },
-        { status: response.status }
-      );
+      // Get a slice of the mock data
+      const data = mockData.tableData.slice(skip, skip + limit);
+      
+      // Return with count if requested
+      if (queryParams.include_count === 'true') {
+        responseData = {
+          data: data,
+          totalCount: mockData.tableData.length
+        };
+      } else if (queryParams.count_only === 'true') {
+        responseData = { totalCount: mockData.tableData.length };
+      } else {
+        responseData = data;
+      }
+    }
+    else if (endpoint === 'locations/search') {
+      const query = queryParams.q || '';
+      const limit = parseInt(queryParams.limit) || 10;
+      
+      // Filter locations based on query
+      responseData = mockData.regions
+        .filter(region => region.name.toLowerCase().includes(query.toLowerCase()))
+        .slice(0, limit);
+    }
+    else {
+      // Default empty response
+      responseData = [];
     }
     
-    // Ambil data dari response
-    const contentType = response.headers.get('content-type');
-    let data;
+    // Log success
+    logRequest('GET', endpoint, 200);
     
-    if (contentType && contentType.includes('application/json')) {
-      data = await response.json();
-      logRequest('GET', targetUrl, response.status);
-    } else {
-      data = { message: 'Non-JSON response received' };
-      const text = await response.text();
-      logRequest('GET', targetUrl, response.status, `Non-JSON response: ${text.substring(0, 100)}...`);
-    }
-    
-    // Return response
-    return NextResponse.json(data);
+    // Return mock data
+    return NextResponse.json(responseData);
   } catch (error) {
     // Log error detail
-    console.error(`[API Proxy] Error dalam request GET:`, error);
-    
-    // Handle AbortError (timeout) secara khusus
-    if (error.name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'Request timeout', details: 'The request took too long to complete' },
-        { status: 504 } // Gateway Timeout
-      );
-    }
+    console.error(`[Mock API] Error in GET request:`, error);
     
     return NextResponse.json(
-      { error: 'Failed to fetch data from backend API', details: error.message },
+      { error: 'Mock API error', details: error.message },
       { status: 500 }
     );
   }
@@ -101,9 +163,15 @@ export async function POST(request, { params }) {
     const url = new URL(request.url);
     
     // Extract path parts after /api/
-    let backendPath = '';
-    if (params.path) {
-      backendPath = params.path.join('/');
+    let endpoint = '';
+    if (params && params.path) {
+      endpoint = params.path.join('/');
+    } else {
+      // Extract path from URL if params.path is not available
+      const apiPrefix = '/api/';
+      if (url.pathname.startsWith(apiPrefix)) {
+        endpoint = url.pathname.substring(apiPrefix.length);
+      }
     }
     
     // Get request body
@@ -111,71 +179,32 @@ export async function POST(request, { params }) {
     try {
       body = await request.json();
     } catch (e) {
-      console.error('[API Proxy] Error parsing request body:', e);
+      console.error('[Mock API] Error parsing request body:', e);
       return NextResponse.json(
         { error: 'Invalid request body', details: e.message },
         { status: 400 }
       );
     }
     
-    const targetUrl = `${API_URL}/${backendPath}`;
-    console.log(`[API Proxy] Forwarding POST: ${targetUrl}`);
+    console.log(`[Mock API] POST request for: ${endpoint}`, body);
     
-    // Timeout handling
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+    // Mock successful response
+    const responseData = {
+      success: true,
+      message: 'Operation completed successfully',
+      id: `mock-id-${Date.now()}`
+    };
     
-    // Forward the request to the backend API
-    const response = await fetch(targetUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    // Log success
+    logRequest('POST', endpoint, 200);
     
-    // Clear timeout
-    clearTimeout(timeoutId);
-    
-    // Handle error response
-    if (!response.ok) {
-      const errorText = await response.text();
-      logRequest('POST', targetUrl, response.status, errorText);
-      
-      return NextResponse.json(
-        { error: `Backend API returned status ${response.status}`, details: errorText },
-        { status: response.status }
-      );
-    }
-    
-    // Get data from response
-    const contentType = response.headers.get('content-type');
-    let data;
-    
-    if (contentType && contentType.includes('application/json')) {
-      data = await response.json();
-      logRequest('POST', targetUrl, response.status);
-    } else {
-      data = { message: 'Operation completed successfully' };
-      logRequest('POST', targetUrl, response.status, 'Non-JSON response received');
-    }
-    
-    // Return response from backend
-    return NextResponse.json(data);
+    // Return mock response
+    return NextResponse.json(responseData);
   } catch (error) {
-    console.error(`[API Proxy] Error dalam request POST:`, error);
-    
-    if (error.name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'Request timeout', details: 'The request took too long to complete' },
-        { status: 504 } // Gateway Timeout
-      );
-    }
+    console.error(`[Mock API] Error in POST request:`, error);
     
     return NextResponse.json(
-      { error: 'Failed to send data to backend API', details: error.message },
+      { error: 'Mock API error', details: error.message },
       { status: 500 }
     );
   }
@@ -190,9 +219,15 @@ export async function PUT(request, { params }) {
     const url = new URL(request.url);
     
     // Extract path parts after /api/
-    let backendPath = '';
-    if (params.path) {
-      backendPath = params.path.join('/');
+    let endpoint = '';
+    if (params && params.path) {
+      endpoint = params.path.join('/');
+    } else {
+      // Extract path from URL if params.path is not available
+      const apiPrefix = '/api/';
+      if (url.pathname.startsWith(apiPrefix)) {
+        endpoint = url.pathname.substring(apiPrefix.length);
+      }
     }
     
     // Get request body
@@ -200,71 +235,32 @@ export async function PUT(request, { params }) {
     try {
       body = await request.json();
     } catch (e) {
-      console.error('[API Proxy] Error parsing request body:', e);
+      console.error('[Mock API] Error parsing request body:', e);
       return NextResponse.json(
         { error: 'Invalid request body', details: e.message },
         { status: 400 }
       );
     }
     
-    const targetUrl = `${API_URL}/${backendPath}`;
-    console.log(`[API Proxy] Forwarding PUT: ${targetUrl}`);
+    console.log(`[Mock API] PUT request for: ${endpoint}`, body);
     
-    // Timeout handling
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+    // Mock successful response
+    const responseData = {
+      success: true,
+      message: 'Update completed successfully',
+      updated: true
+    };
     
-    // Forward the request to the backend API
-    const response = await fetch(targetUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    // Log success
+    logRequest('PUT', endpoint, 200);
     
-    // Clear timeout
-    clearTimeout(timeoutId);
-    
-    // Handle error response
-    if (!response.ok) {
-      const errorText = await response.text();
-      logRequest('PUT', targetUrl, response.status, errorText);
-      
-      return NextResponse.json(
-        { error: `Backend API returned status ${response.status}`, details: errorText },
-        { status: response.status }
-      );
-    }
-    
-    // Get data from response
-    const contentType = response.headers.get('content-type');
-    let data;
-    
-    if (contentType && contentType.includes('application/json')) {
-      data = await response.json();
-      logRequest('PUT', targetUrl, response.status);
-    } else {
-      data = { message: 'Operation completed successfully' };
-      logRequest('PUT', targetUrl, response.status, 'Non-JSON response received');
-    }
-    
-    // Return response from backend
-    return NextResponse.json(data);
+    // Return mock response
+    return NextResponse.json(responseData);
   } catch (error) {
-    console.error(`[API Proxy] Error dalam request PUT:`, error);
-    
-    if (error.name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'Request timeout', details: 'The request took too long to complete' },
-        { status: 504 } // Gateway Timeout
-      );
-    }
+    console.error(`[Mock API] Error in PUT request:`, error);
     
     return NextResponse.json(
-      { error: 'Failed to update data in backend API', details: error.message },
+      { error: 'Mock API error', details: error.message },
       { status: 500 }
     );
   }
@@ -279,59 +275,36 @@ export async function DELETE(request, { params }) {
     const url = new URL(request.url);
     
     // Extract path parts after /api/
-    let backendPath = '';
-    if (params.path) {
-      backendPath = params.path.join('/');
-    }
-    
-    const targetUrl = `${API_URL}/${backendPath}`;
-    console.log(`[API Proxy] Forwarding DELETE: ${targetUrl}`);
-    
-    // Timeout handling
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
-    
-    // Forward the request to the backend API
-    const response = await fetch(targetUrl, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-    });
-    
-    // Clear timeout
-    clearTimeout(timeoutId);
-    
-    // Get data from response (if any)
-    let data;
-    try {
-      if (response.headers.get('content-type')?.includes('application/json')) {
-        data = await response.json();
-      } else {
-        data = { message: 'Resource deleted successfully' };
+    let endpoint = '';
+    if (params && params.path) {
+      endpoint = params.path.join('/');
+    } else {
+      // Extract path from URL if params.path is not available
+      const apiPrefix = '/api/';
+      if (url.pathname.startsWith(apiPrefix)) {
+        endpoint = url.pathname.substring(apiPrefix.length);
       }
-      logRequest('DELETE', targetUrl, response.status);
-    } catch {
-      data = { message: 'Resource deleted successfully' };
-      logRequest('DELETE', targetUrl, response.status, 'Could not parse response');
     }
     
-    // Return response from backend
-    return NextResponse.json(data, { status: response.status });
+    console.log(`[Mock API] DELETE request for: ${endpoint}`);
+    
+    // Mock successful response
+    const responseData = {
+      success: true,
+      message: 'Resource deleted successfully',
+      deleted: true
+    };
+    
+    // Log success
+    logRequest('DELETE', endpoint, 200);
+    
+    // Return mock response
+    return NextResponse.json(responseData);
   } catch (error) {
-    console.error(`[API Proxy] Error dalam request DELETE:`, error);
-    
-    if (error.name === 'AbortError') {
-      return NextResponse.json(
-        { error: 'Request timeout', details: 'The request took too long to complete' },
-        { status: 504 } // Gateway Timeout
-      );
-    }
+    console.error(`[Mock API] Error in DELETE request:`, error);
     
     return NextResponse.json(
-      { error: 'Failed to delete data in backend API', details: error.message },
+      { error: 'Mock API error', details: error.message },
       { status: 500 }
     );
   }

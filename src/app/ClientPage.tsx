@@ -30,6 +30,7 @@ export default function ClientPage() {
   // Refs to prevent update loops
   const updatingFiltersRef = useRef(false);
   const filtersTimeoutRef = useRef(null);
+  const initialSyncDoneRef = useRef(false);
   
   // Debug logger
   const logDebug = useCallback((message, data) => {
@@ -39,10 +40,10 @@ export default function ClientPage() {
   }, []);
   
   // Get data and functions from DataContext
-  const { 
-    dashboardStats, 
+  const {
+    dashboardStats,
     chartData,
-    loading, 
+    loading,
     filters,
     updateFilters,
     error
@@ -55,27 +56,42 @@ export default function ClientPage() {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [isPending, startTransition] = useTransition();
   
-  // Initialize local state from DataContext
+  // Single effect for syncing state from context
+  // This prevents multiple state updates triggering multiple API calls
   useEffect(() => {
     // Skip if we're in the middle of updating filters to avoid loops
     if (updatingFiltersRef.current) return;
     
     // Only update if filters is defined
     if (filters) {
-      logDebug('Syncing from context filters to local state', filters);
+      // Only log on first sync or when filters change
+      if (!initialSyncDoneRef.current) {
+        logDebug('Initial sync from context filters to local state', filters);
+        initialSyncDoneRef.current = true;
+      }
+      
+      // Batch state updates to prevent multiple renders
+      const updates = {};
       
       if (filters.searchQuery !== undefined && filters.searchQuery !== searchQuery) {
         setSearchQuery(filters.searchQuery);
+        updates.searchQuery = true;
       }
       
       if (filters.year !== undefined && filters.year.toString() !== filterYear) {
         setFilterYear(filters.year.toString());
+        updates.year = true;
+      }
+      
+      // Only log if something actually changed
+      if (Object.keys(updates).length > 0) {
+        logDebug('Updated local state from context', updates);
       }
     }
   }, [filters, searchQuery, filterYear, logDebug]);
   
-  // Create filters object for context update
-  const prepareFilters = useCallback(() => {
+  // Create filters object for context update - memoized to prevent unnecessary recalculations
+  const prepareFilters = useMemo(() => {
     const newFilters = {};
     
     // Add filter year
@@ -127,8 +143,11 @@ export default function ClientPage() {
     return newFilters;
   }, [filterYear, selectedRegion, selectedLocation, searchQuery]);
   
-  // Handle filter updates - debounced with loop prevention
+  // Handle filter updates with debounce
   const updateFiltersWithDebounce = useCallback(() => {
+    // Skip if we're already updating
+    if (updatingFiltersRef.current) return;
+    
     // Clear any pending timeouts
     if (filtersTimeoutRef.current) {
       clearTimeout(filtersTimeoutRef.current);
@@ -136,16 +155,16 @@ export default function ClientPage() {
     
     // Set a new timeout to update filters after debounce period
     filtersTimeoutRef.current = setTimeout(() => {
-      const newFilters = prepareFilters();
-      
       // Set updating flag to prevent loops
       updatingFiltersRef.current = true;
       
-      logDebug('Debounced filter update', newFilters);
+      // Get the current filters
+      const currentFilters = prepareFilters;
+      logDebug('Debounced filter update', currentFilters);
       
       if (typeof updateFilters === 'function') {
         startTransition(() => {
-          updateFilters(newFilters);
+          updateFilters(currentFilters);
           
           // Reset updating flag after a small delay
           setTimeout(() => {
@@ -159,51 +178,52 @@ export default function ClientPage() {
     }, 500); // 500ms debounce
   }, [prepareFilters, updateFilters, logDebug]);
   
-  // Update filters when search, year, region or location changes
-  // But with loop prevention
-  useEffect(() => {
-    // Skip if we're in the middle of updating from context to local state
-    if (updatingFiltersRef.current) return;
-    
-    logDebug('Filter dependencies changed, scheduling update', { 
-      searchQuery, filterYear, selectedRegion, selectedLocation 
-    });
-    
-    updateFiltersWithDebounce();
-    
-    // Cleanup function
-    return () => {
-      if (filtersTimeoutRef.current) {
-        clearTimeout(filtersTimeoutRef.current);
-      }
-    };
-  }, [searchQuery, filterYear, selectedRegion, selectedLocation, updateFiltersWithDebounce, logDebug]);
+  // Optimized handlers for filter changes
+  // These handlers update local state but don't trigger immediate API calls
+  // Instead, they rely on the useEffect below to batch updates
   
   // Handle location selection changes
   const handleLocationChange = useCallback((location) => {
     logDebug('Location changed', location);
+    
+    // Update local state
     setSelectedLocation(location);
+    
     // Reset region selection when location is selected
     if (location) {
       setSelectedRegion(null);
     }
-  }, [logDebug]);
+    
+    // Schedule debounced update
+    updateFiltersWithDebounce();
+  }, [logDebug, updateFiltersWithDebounce]);
 
   // Handle region selection changes
   const handleRegionChange = useCallback((region) => {
     logDebug('Region changed', region);
+    
+    // Update local state
     setSelectedRegion(region);
+    
     // Reset location selection when region is selected
     if (region && region.id !== 'all') {
       setSelectedLocation(null);
     }
-  }, [logDebug]);
+    
+    // Schedule debounced update
+    updateFiltersWithDebounce();
+  }, [logDebug, updateFiltersWithDebounce]);
 
   // Handler for search query changes
   const handleSearchQueryChange = useCallback((query) => {
     logDebug('Search query changed', query);
+    
+    // Update local state
     setSearchQuery(query);
-  }, [logDebug]);
+    
+    // Schedule debounced update
+    updateFiltersWithDebounce();
+  }, [logDebug, updateFiltersWithDebounce]);
 
   // Show error state if DataContext reported an error
   if (error && error.dashboard) {

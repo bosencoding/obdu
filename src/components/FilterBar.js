@@ -5,10 +5,10 @@ import RegionDropdown from './RegionDropdown';
 import AutocompleteSearch from './AutoCompleteSearch';
 import { useData } from '@/app/context/DataContext';
 
-export default function FilterBar({ 
-  searchQuery, 
-  setSearchQuery, 
-  filterYear, 
+export default function FilterBar({
+  searchQuery,
+  setSearchQuery,
+  filterYear,
   setFilterYear,
   selectedRegion,
   setSelectedRegion,
@@ -18,39 +18,81 @@ export default function FilterBar({
   // Get updateFilters directly from DataContext
   const { updateFilters, filters: contextFilters } = useData();
   
+  // Refs to prevent update loops
+  const isUpdatingRef = useRef(false);
+  const debounceTimerRef = useRef(null);
+  const batchedUpdatesRef = useRef({});
+  
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery || '');
-  const debounceTimerRef = useRef(null);
   const years = ['2021', '2022', '2023', '2024', '2025'];
   
-  // Sync local state with context when needed
+  // Single effect to sync local state with context
+  // This prevents multiple state updates triggering multiple API calls
   useEffect(() => {
-    if (contextFilters?.searchQuery !== undefined && contextFilters.searchQuery !== localSearchQuery) {
+    // Skip if we're in the middle of updating to prevent loops
+    if (isUpdatingRef.current) return;
+    
+    // Sync search query from context if needed
+    if (contextFilters?.searchQuery !== undefined &&
+        contextFilters.searchQuery !== localSearchQuery) {
       setLocalSearchQuery(contextFilters.searchQuery);
     }
-  }, [contextFilters?.searchQuery]);
-  
-  // When searchQuery prop changes (from parent), update local state
-  useEffect(() => {
-    if (searchQuery !== undefined && searchQuery !== localSearchQuery) {
+    
+    // Sync search query from props if needed
+    if (searchQuery !== undefined &&
+        searchQuery !== localSearchQuery &&
+        searchQuery !== contextFilters?.searchQuery) {
       setLocalSearchQuery(searchQuery);
     }
-  }, [searchQuery]);
+  }, [contextFilters?.searchQuery, searchQuery, localSearchQuery]);
   
-  // Apply the search filter directly without debounce when user submits
+  // Batched filter updates to reduce API calls
+  const batchFilterUpdates = useCallback((updates) => {
+    // Store updates in the ref
+    batchedUpdatesRef.current = {
+      ...batchedUpdatesRef.current,
+      ...updates,
+      // Always reset to page 1 when filters change
+      page: 1
+    };
+    
+    // Clear any existing timeout
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    
+    // Set a new timeout to apply all batched updates at once
+    debounceTimerRef.current = setTimeout(() => {
+      if (Object.keys(batchedUpdatesRef.current).length > 0) {
+        // Set updating flag to prevent loops
+        isUpdatingRef.current = true;
+        
+        // Apply all batched updates at once
+        if (updateFilters) {
+          updateFilters(batchedUpdatesRef.current);
+        }
+        
+        // Reset batched updates
+        batchedUpdatesRef.current = {};
+        
+        // Reset updating flag after a short delay
+        setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 100);
+      }
+    }, 300);
+  }, [updateFilters]);
+  
+  // Apply the search filter when user submits
   const handleSearchSubmit = (e) => {
     e.preventDefault();
     
     // Apply search immediately on submit
     setSearchQuery(localSearchQuery);
     
-    // Update global filters
-    if (updateFilters) {
-      updateFilters({ 
-        searchQuery: localSearchQuery,
-        page: 1 // Reset to page 1 when searching
-      });
-    }
+    // Batch update
+    batchFilterUpdates({ searchQuery: localSearchQuery });
   };
   
   // Debounced search handling
@@ -58,21 +100,18 @@ export default function FilterBar({
     const value = e.target.value;
     setLocalSearchQuery(value);
     
+    // Clear any existing timeout
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
     
+    // Set a longer debounce for typing
     debounceTimerRef.current = setTimeout(() => {
       setSearchQuery(value);
       
-      // Update global filters after debounce
-      if (updateFilters) {
-        updateFilters({ 
-          searchQuery: value,
-          page: 1 // Reset to page 1 when search changes
-        });
-      }
-    }, 800); // Slightly longer debounce for typing
+      // Batch update
+      batchFilterUpdates({ searchQuery: value });
+    }, 800);
   };
   
   // Clear debounce timer on unmount
@@ -86,119 +125,106 @@ export default function FilterBar({
   
   // Callbacks for location and region selection
   const handleLocationSelect = useCallback((location) => {
-    console.log('Location selected:', location);
+    // Update local state
     setSelectedLocation(location);
     
-    // Update filters directly when location changes
-    if (updateFilters && location) {
+    // Prepare filter updates
+    let updates = {};
+    
+    if (location) {
       const locationName = location.name || '';
       // Extract the city name from the location name if it includes the type
       const kotaKab = location.type ? locationName.replace(location.type, '').trim() : locationName;
       
-      updateFilters({
+      updates = {
         regionId: location.id,
         provinsi: location.provinsi,
         daerahTingkat: location.type || null,
-        kotaKab: kotaKab,
-        page: 1 // Reset to page 1 when location changes
-      });
-    } else if (updateFilters && !location) {
+        kotaKab: kotaKab
+      };
+      
+      // Reset region selection when location is selected
+      setSelectedRegion(null);
+    } else {
       // Reset location filters if location is cleared
-      updateFilters({
+      updates = {
         regionId: null,
         daerahTingkat: null,
-        kotaKab: null,
-        page: 1
-      });
+        kotaKab: null
+      };
     }
     
-    // Reset region selection when location is selected
-    if (location) {
-      setSelectedRegion(null);
-    }
-  }, [setSelectedLocation, setSelectedRegion, updateFilters]);
+    // Batch update filters
+    batchFilterUpdates(updates);
+  }, [setSelectedLocation, setSelectedRegion, batchFilterUpdates]);
 
   const handleRegionSelect = useCallback((region) => {
-    console.log('Region selected:', region);
+    // Update local state
     setSelectedRegion(region);
     
-    // Update filters directly when region changes
-    if (updateFilters) {
-      if (region && region.id !== 'all') {
-        // Prepare filter updates based on region type
-        const filterUpdates = { 
-          regionId: region.id,
-          page: 1 // Reset to page 1 when region changes
-        };
-        
-        if (region.id.startsWith('province-')) {
-          filterUpdates.provinsi = region.name;
-          filterUpdates.daerahTingkat = null;
-          filterUpdates.kotaKab = null;
-        } else if (region.id.startsWith('region-')) {
-          filterUpdates.provinsi = region.provinsi;
-          filterUpdates.daerahTingkat = region.type;
-          const kotaKab = region.name.replace(region.type || '', '').trim();
-          filterUpdates.kotaKab = kotaKab;
-        }
-        
-        updateFilters(filterUpdates);
-      } else {
-        // Reset region filters if "all" is selected
-        updateFilters({
-          regionId: null,
-          provinsi: null,
-          daerahTingkat: null,
-          kotaKab: null,
-          page: 1
-        });
+    // Prepare filter updates
+    let updates = {};
+    
+    if (region && region.id !== 'all') {
+      updates = { regionId: region.id };
+      
+      if (region.id.startsWith('province-')) {
+        updates.provinsi = region.name;
+        updates.daerahTingkat = null;
+        updates.kotaKab = null;
+      } else if (region.id.startsWith('region-')) {
+        updates.provinsi = region.provinsi;
+        updates.daerahTingkat = region.type;
+        const kotaKab = region.name.replace(region.type || '', '').trim();
+        updates.kotaKab = kotaKab;
       }
+      
+      // Reset location search if region is selected
+      setSelectedLocation(null);
+    } else {
+      // Reset region filters if "all" is selected
+      updates = {
+        regionId: null,
+        provinsi: null,
+        daerahTingkat: null,
+        kotaKab: null
+      };
     }
     
-    // Reset location search if region is selected
-    if (region && region.id !== 'all') {
-      setSelectedLocation(null);
-    }
-  }, [setSelectedRegion, setSelectedLocation, updateFilters]);
+    // Batch update filters
+    batchFilterUpdates(updates);
+  }, [setSelectedRegion, setSelectedLocation, batchFilterUpdates]);
   
   // Handle year filter changes
   const handleYearChange = useCallback((year) => {
+    // Update local state
     setFilterYear(year);
     setShowYearDropdown(false);
     
-    // Update global filters when year changes
-    if (updateFilters) {
-      updateFilters({ 
-        year: parseInt(year, 10),
-        page: 1 // Reset to page 1 when year changes
-      });
-    }
-  }, [setFilterYear, updateFilters]);
+    // Batch update filters
+    batchFilterUpdates({ year: parseInt(year, 10) });
+  }, [setFilterYear, batchFilterUpdates]);
   
   // Reset to Jakarta Selatan default view
   const handleResetFilter = useCallback(() => {
+    // Update local state
     setSelectedLocation(null);
     setLocalSearchQuery('');
     setSearchQuery('');
     
     // Reset to default Jakarta Selatan region
-    if (setSelectedRegion) {
-      const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
-      setSelectedRegion(defaultRegion);
-    }
+    const defaultRegion = { id: 'all', name: 'Semua Wilayah', provinsi: null, type: null, count: 0 };
+    setSelectedRegion(defaultRegion);
     
-    // Reset filters in global context
-    if (updateFilters) {
-      updateFilters({
-        searchQuery: '',
-        regionId: null,
-        provinsi: 'DKI Jakarta',    // Default Jakarta
-        daerahTingkat: 'Kota',      // Default Kota
-        kotaKab: 'Jakarta Selatan', // Default Jakarta Selatan
-        page: 1
-      });
-    }
-  }, [setSelectedLocation, setSelectedRegion, setSearchQuery, updateFilters]);
+    // Batch update all filters at once
+    batchFilterUpdates({
+      searchQuery: '',
+      regionId: null,
+      provinsi: 'DKI Jakarta',    // Default Jakarta
+      daerahTingkat: 'Kota',      // Default Kota
+      kotaKab: 'Jakarta Selatan'  // Default Jakarta Selatan
+    });
+  }, [setSelectedLocation, setSelectedRegion, setSearchQuery, batchFilterUpdates]);
   
   // Create Jakarta Selatan filter label if no specific filters are applied
   const isDefaultJakselView = !localSearchQuery && 

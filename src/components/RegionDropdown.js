@@ -33,24 +33,34 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
         const data = await getRegionsList();
         
         // Find if Jakarta Selatan already exists in the data
-        const jakselExists = data.some(region => 
-          region.name === 'Kota Jakarta Selatan' || 
-          (region.type === 'Kota' && region.name.includes('Jakarta Selatan'))
+        // Find if a region matching "Jakarta Selatan" exists in the data
+        // Be more flexible to match potential backend variations
+        const jakselRegionFromApi = data.find(region =>
+          (region.name && region.name.toLowerCase().includes('jakarta selatan') && region.type === 'Kota') ||
+          (region.provinsi && region.provinsi.toLowerCase().includes('dki jakarta') && region.type === 'Kota' && region.name.toLowerCase().includes('jakarta selatan'))
         );
-        
-        // Add Jakarta Selatan at the top if it doesn't exist
-        if (!jakselExists) {
-          data.unshift(jakartaSelatanRegion);
+
+        let regionsToSet = data;
+
+        // Add default "Semua Wilayah" option at the beginning
+        regionsToSet.unshift(defaultRegion);
+
+        // If "Kota Jakarta Selatan" wasn't found in API data, add the mock version
+        if (!jakselRegionFromApi) {
+           // Check if a region with the mock ID already exists to avoid duplicates
+           const mockJakselExists = regionsToSet.some(region => region.id === jakartaSelatanRegion.id);
+           if (!mockJakselExists) {
+             regionsToSet.splice(1, 0, jakartaSelatanRegion); // Add after "Semua Wilayah"
+           }
         }
-        
-        // Add default "Semua Wilayah" option
-        const allRegions = [defaultRegion, ...data];
-        setRegions(allRegions);
-        setFilteredRegions(allRegions);
+
+
+        setRegions(regionsToSet);
+        setFilteredRegions(regionsToSet);
       } catch (err) {
         console.error('Error fetching regions:', err);
         setError('Gagal memuat data wilayah');
-        // Provide fallback data with Jakarta Selatan
+        // Provide fallback data with "Semua Wilayah" and mock Jakarta Selatan
         const fallbackRegions = [defaultRegion, jakartaSelatanRegion];
         setRegions(fallbackRegions);
         setFilteredRegions(fallbackRegions);
@@ -65,14 +75,15 @@ export default function RegionDropdown({ selectedRegion, setSelectedRegion }) {
   // Set default region if not already set
   useEffect(() => {
     if (!selectedRegion && regions.length > 0) {
-      // Default to Jakarta Selatan instead of "all"
-      const jakselRegion = regions.find(r => 
-        r.name === 'Kota Jakarta Selatan' || 
-        (r.type === 'Kota' && r.name.includes('Jakarta Selatan'))
+      // Try to find the actual "Kota Jakarta Selatan" from the fetched regions first
+      const jakselRegion = regions.find(r =>
+         (r.name && r.name.toLowerCase().includes('jakarta selatan') && r.type === 'Kota') ||
+         (r.provinsi && r.provinsi.toLowerCase().includes('dki jakarta') && r.type === 'Kota' && r.name.toLowerCase().includes('jakarta selatan'))
       );
-      
-      // Use Jakarta Selatan if found, otherwise use "all"
-      setSelectedRegion(jakselRegion || regions[0]);
+
+      // Use the found Jakarta Selatan region, or fallback to the mock one, or finally "Semua Wilayah"
+      const defaultSelection = jakselRegion || regions.find(r => r.id === jakartaSelatanRegion.id) || regions[0];
+      setSelectedRegion(defaultSelection);
     }
   }, [regions, selectedRegion, setSelectedRegion]);
 

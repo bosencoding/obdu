@@ -1,98 +1,101 @@
-import { useState, useEffect, useCallback } from 'react';
+"use client"
+
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
-export default function TableSection({ 
-  searchQuery, 
+export default function TableSection({
+  // Props below for backward compatibility
+  searchQuery,
   filterYear,
   selectedRegion,
   selectedLocation,
+  // Use DataContext by default
   useDataContext = true
 }) {
-  // Dapatkan data dari context
-  const { 
+  // Get data from context
+  const {
     tableData: contextTableData,
-    totalItems: contextTotalItems, 
-    loading, 
+    totalItems: contextTotalItems,
+    loading,
     filters,
     updateFilters,
     fetchTableData,
-    fetchTotalItemCount,
     error
   } = useData();
   
-  // State lokal untuk mode non-context (kompatibilitas mundur)
+  // Refs to prevent unnecessary API calls
+  const initialLoadDoneRef = useRef(false);
+  const isUpdatingRef = useRef(false);
+  
+  // Local state for non-context mode (backward compatibility)
   const [allData, setAllData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   
-  // Tentukan sumber data mana yang akan digunakan
+  // Determine which data source to use
   const tableData = useDataContext ? contextTableData : allData;
   const loadingState = useDataContext ? (loading.dashboard || loading.table) : isLoading;
   const tableError = useDataContext ? (error?.dashboard || error?.table) : errorMessage;
   
-  // Paginasi sisi klien
+  // Client-side pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   
-  // Dapatkan total items count saat pertama kali dimuat dan saat filter berubah
-  useEffect(() => {
-    if (useDataContext && typeof fetchTotalItemCount === 'function' && !loadingState) {
-      fetchTotalItemCount();
-    }
-  }, [useDataContext, fetchTotalItemCount, filters, loadingState]);
-  
-  // Gunakan total items dari context - dapatkan jumlah yang tepat dari API
-  const totalItems = useDataContext 
+  // Use context total items
+  const totalItems = useDataContext
     ? (contextTotalItems || 0)
     : allData.length;
   
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   
-  // Tampilkan tombol halaman berikutnya jika kita memiliki halaman penuh data
+  // Force show next page button if we have a full page of items
   const shouldShowNextPage = tableData.length >= itemsPerPage;
   
-  // Sinkronkan dengan filter saat ini saat komponen di-mount dan saat filter berubah
+  // Single effect for initial data loading and page synchronization
   useEffect(() => {
+    // Skip if we're in the middle of an update to prevent loops
+    if (isUpdatingRef.current) return;
+    
     if (useDataContext && filters) {
-      // Sinkronkan dengan filter saat ini
-      setCurrentPage(filters.page || 1);
+      // Sync current page with filters
+      if (filters.page && filters.page !== currentPage) {
+        setCurrentPage(filters.page);
+      }
       
-      // Jika tableData kosong tetapi seharusnya ada data, coba ambil
-      if (tableData.length === 0 && !loadingState && !tableError) {
+      // Only fetch data on initial load or when filters change significantly
+      if (!initialLoadDoneRef.current && !loadingState) {
+        initialLoadDoneRef.current = true;
+        
         if (typeof fetchTableData === 'function') {
           fetchTableData(filters.page || 1, itemsPerPage);
         }
       }
     }
-  }, [filters, useDataContext, tableData, loadingState, tableError, fetchTableData, itemsPerPage]);
+  }, [useDataContext, filters, currentPage, loadingState, fetchTableData, itemsPerPage]);
   
-  // Handler yang lebih andal untuk perubahan halaman
+  // Optimized handler for pagination changes
   const handlePageChange = useCallback((newPage) => {
     if (newPage >= 1 && (newPage <= totalPages || (newPage === currentPage + 1 && shouldShowNextPage))) {
+      // Set local state immediately for better UX
       setCurrentPage(newPage);
       
       if (useDataContext && typeof updateFilters === 'function') {
-        // Perbarui filter dengan halaman baru
+        // Prevent update loops
+        isUpdatingRef.current = true;
+        
+        // Update filters with new page - this will trigger data fetch in DataContext
         updateFilters({ page: newPage });
         
-        // Untuk paginasi yang lebih andal, ambil data tabel langsung dengan halaman baru
-        if (typeof fetchTableData === 'function') {
-          fetchTableData(newPage, itemsPerPage);
-        }
+        // Reset updating flag after a short delay
+        setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 100);
       }
     }
-  }, [useDataContext, updateFilters, fetchTableData, totalPages, itemsPerPage, currentPage, shouldShowNextPage]);
+  }, [useDataContext, updateFilters, totalPages, currentPage, shouldShowNextPage]);
   
-<<<<<<< Updated upstream
-  // Sinkronkan halaman lokal dengan halaman context saat filter berubah
-  useEffect(() => {
-    if (useDataContext && filters?.page && filters.page !== currentPage) {
-      setCurrentPage(filters.page);
-    }
-  }, [filters, currentPage, useDataContext]);
-=======
   // Calculate current page data slice (for non-context mode)
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -109,33 +112,89 @@ export default function TableSection({
         wilayah: item.wilayah || item.lokasi || formatWilayah(item),
         pagu: item.pagu || '-' // Corrected pagu field name
       }));
->>>>>>> Stashed changes
   
-  // Generate array nomor halaman untuk ditampilkan
+  // Helper functions for non-context mode
+  function formatWilayah(item) {
+    if (item.lokasi) return item.lokasi;
+    
+    if (item.provinsi) {
+      let result = '';
+      if (item.daerah_tingkat) result += `${item.daerah_tingkat} `;
+      if (item.kota_kab) result += item.kota_kab;
+      if (result) result += `, ${item.provinsi}`;
+      else result = item.provinsi;
+      return result;
+    }
+    
+    return '-';
+  }
+  
+  function determineStatus(item) {
+    const currentDate = new Date();
+    const itemDate = item.pemilihan_datetime ? new Date(item.pemilihan_datetime) : null;
+    
+    if (!itemDate) return 'Sesuai';
+    
+    if (itemDate < currentDate) return 'Hrge Esak Btorch';
+    if (item.is_pdn === false) return 'Dibth Flnxnnm';
+    return 'Sesuai';
+  }
+
+  // Determine the page title based on context filters or props
+  const pageTitle = useDataContext
+    ? getPageTitle(filters)
+    : (selectedLocation?.name || 
+      (selectedRegion?.id !== 'all' ? selectedRegion?.name : 
+      (!searchQuery && !selectedRegion && !selectedLocation ? 'Kota Jakarta Selatan' : 'Semua')));
+  
+  // Helper function to get page title from filters
+  function getPageTitle(filters) {
+    // Safety check - if filters is undefined, return default
+    if (!filters) {
+      return 'Daftar Paket';
+    }
+    
+    if (filters.kotaKab && filters.daerahTingkat) {
+      return `${filters.daerahTingkat} ${filters.kotaKab}`;
+    }
+    
+    if (filters.provinsi && !filters.kotaKab) {
+      return filters.provinsi;
+    }
+    
+    if (filters.searchQuery) {
+      return `Pencarian: ${filters.searchQuery}`;
+    }
+    
+    // Default
+    return 'Daftar Paket';
+  }
+
+  // Generate array of page numbers to display
   const getPageNumbers = useCallback(() => {
     const pageNumbers = [];
     
     if (totalPages <= 7) {
-      // Tampilkan semua halaman jika 7 atau kurang
+      // Show all pages if 7 or fewer
       for (let i = 1; i <= totalPages; i++) {
         pageNumbers.push(i);
       }
     } else if (currentPage <= 4) {
-      // Dekat dengan awal
+      // Near the beginning
       for (let i = 1; i <= 5; i++) {
         pageNumbers.push(i);
       }
       pageNumbers.push('...');
       pageNumbers.push(totalPages);
     } else if (currentPage >= totalPages - 3) {
-      // Dekat dengan akhir
+      // Near the end
       pageNumbers.push(1);
       pageNumbers.push('...');
       for (let i = totalPages - 4; i <= totalPages; i++) {
         pageNumbers.push(i);
       }
     } else {
-      // Tengah
+      // Middle
       pageNumbers.push(1);
       pageNumbers.push('...');
       for (let i = currentPage - 1; i <= currentPage + 1; i++) {
@@ -148,33 +207,38 @@ export default function TableSection({
     return pageNumbers;
   }, [currentPage, totalPages]);
   
-  // Dapatkan array nomor halaman
+  // Empty state for when there's no data
+  const EmptyState = () => (
+    <div className="py-8 text-center">
+      <p className="text-gray-500">Tidak ada data yang ditemukan.</p>
+      {filters?.searchQuery && (
+        <p className="mt-2 text-sm text-gray-500">
+          Coba ubah filter pencarian atau wilayah untuk melihat hasil berbeda.
+        </p>
+      )}
+    </div>
+  );
+  
+  // Error state
+  const ErrorState = ({ message }) => (
+    <div className="py-8 text-center">
+      <p className="text-red-500">Terjadi kesalahan saat memuat data.</p>
+      {message && <p className="mt-2 text-sm text-gray-500">{message}</p>}
+    </div>
+  );
+  
+  // Get the array of page numbers
   const pageNumbers = getPageNumbers();
   
-  // Hitung items yang ditampilkan pada halaman saat ini
-  const startIndex = (currentPage - 1) * itemsPerPage;
+  // Calculate the actual items shown on the current page
   const itemsShown = tableData.length;
   const displayStartIndex = startIndex + 1;
   const displayEndIndex = startIndex + itemsShown;
   
-  // Ambil data untuk ditampilkan (untuk mode non-context)
-  const displayData = useDataContext 
-    ? tableData 
-    : allData.slice(startIndex, endIndex).map((item, index) => ({
-        no: startIndex + index + 1,
-        nama: item.paket || item.nama || '-',
-        satuan: item.satuan_kerja || item.satuan || '-',
-        krema: item.metode || item.krema || '-',
-        jadwal: item.pemilihan || item.jadwal || 'Belum ditentukan',
-        status: item.status || determineStatus(item),
-        keterangan: item.keterangan || item.jenis_pengadaan || '-',
-        wilayah: item.wilayah || item.lokasi || formatWilayah(item)
-      }));
-
   return (
     <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
       <h2 className="text-lg font-semibold mb-4">
-        Paket Pekerjaan {getPageTitle(filters, selectedLocation, selectedRegion, searchQuery)}
+        Paket Pekerjaan {pageTitle}
       </h2>
       
       {loadingState ? (
@@ -242,58 +306,4 @@ export default function TableSection({
       )}
     </div>
   );
-}
-
-// Komponen untuk state kosong
-const EmptyState = () => (
-  <div className="py-8 text-center">
-    <p className="text-gray-500">Tidak ada data yang ditemukan.</p>
-    <p className="mt-2 text-sm text-gray-500">
-      Coba ubah filter pencarian atau wilayah untuk melihat hasil berbeda.
-    </p>
-  </div>
-);
-
-// Komponen untuk state error
-const ErrorState = ({ message }) => (
-  <div className="py-8 text-center">
-    <p className="text-red-500">Terjadi kesalahan saat memuat data.</p>
-    {message && <p className="mt-2 text-sm text-gray-500">{message}</p>}
-  </div>
-);
-
-// Helper function untuk mendapatkan judul halaman dari filter
-function getPageTitle(filters, selectedLocation, selectedRegion, searchQuery) {
-  // Safety check - jika filters tidak terdefinisi, kembalikan default
-  if (!filters) {
-    return 'Daftar Paket';
-  }
-  
-  if (filters.kotaKab && filters.daerahTingkat) {
-    return `${filters.daerahTingkat} ${filters.kotaKab}`;
-  }
-  
-  if (filters.provinsi && !filters.kotaKab) {
-    return filters.provinsi;
-  }
-  
-  if (filters.searchQuery) {
-    return `Pencarian: ${filters.searchQuery}`;
-  }
-  
-  // Fallback untuk kompatibilitas mundur
-  if (selectedLocation?.name) {
-    return selectedLocation.name;
-  }
-  
-  if (selectedRegion?.id !== 'all' && selectedRegion?.name) {
-    return selectedRegion.name;
-  }
-  
-  if (searchQuery) {
-    return `Pencarian: ${searchQuery}`;
-  }
-  
-  // Default
-  return 'Daftar Paket';
 }
