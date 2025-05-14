@@ -10,6 +10,11 @@ import { useCallback } from 'react';
  */
 export const calculateTotalItems = (data, page, limit, currentTotal) => {
   // If the API directly provides a total count
+  // If the API directly provides a total count with the label 'total'
+  if (data && typeof data === 'object' && data.total !== undefined) {
+    return data.total;
+  }
+  // Also check for 'totalCount' for backward compatibility if needed, or remove if 'total' is the standard
   if (data && typeof data === 'object' && data.totalCount !== undefined) {
     return data.totalCount;
   }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
@@ -29,6 +29,11 @@ export default function TableSection({
   const initialLoadDoneRef = useRef(false);
   const isUpdatingRef = useRef(false);
   
+  // Local state for filter selections
+  const [metodeFilter, setMetodeFilter] = useState('');
+  const [jadwalFilter, setJadwalFilter] = useState('');
+  const [keteranganFilter, setKeteranganFilter] = useState('');
+
   // Local state for non-context mode (backward compatibility)
   const [allData, setAllData] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,10 +44,25 @@ export default function TableSection({
   const loadingState = useDataContext ? (loading.dashboard || loading.table) : isLoading;
   const tableError = useDataContext ? (error?.dashboard || error?.table) : errorMessage;
   
+  // State for unique filter options derived from data
+  const [jenisPengadaanOptions, setJenisPengadaanOptions] = useState([]);
+
   // Client-side pagination
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   
+  // Generate month/year options for Jadwal filter
+  const jadwalMonthYearOptions = useMemo(() => {
+    const year = filters?.year; // Get year from context filters
+    if (!year) return [];
+
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    return months.map(month => `${month} ${year}`);
+  }, [filters?.year]); // Regenerate when year filter changes
+
   // Use context total items
   const totalItems = useDataContext
     ? (contextTotalItems || 0)
@@ -75,6 +95,18 @@ export default function TableSection({
     }
   }, [useDataContext, filters, currentPage, loadingState, fetchTableData, itemsPerPage]);
   
+  // Effect to extract unique Jenis Pengadaan filter options from tableData
+  useEffect(() => {
+    if (tableData && tableData.length > 0) {
+      // Extract unique Jenis Pengadaan
+      const uniqueJenisPengadaan = [...new Set(tableData.map(item => item.keterangan).filter(Boolean))]; // Use item.keterangan as source
+      setJenisPengadaanOptions(uniqueJenisPengadaan);
+    } else {
+      // Reset options if no data
+      setJenisPengadaanOptions([]);
+    }
+  }, [tableData]); // Re-run when tableData changes
+
   // Optimized handler for pagination changes
   const handlePageChange = useCallback((newPage) => {
     if (newPage >= 1 && (newPage <= totalPages || (newPage === currentPage + 1 && shouldShowNextPage))) {
@@ -193,6 +225,8 @@ export default function TableSection({
       for (let i = totalPages - 4; i <= totalPages; i++) {
         pageNumbers.push(i);
       }
+      pageNumbers.push('...');
+      pageNumbers.push(totalPages);
     } else {
       // Middle
       pageNumbers.push(1);
@@ -241,6 +275,72 @@ export default function TableSection({
         Paket Pekerjaan {pageTitle}
       </h2>
       
+      {/* Filter Dropdowns */}
+      <div className="flex flex-wrap gap-4 mb-4"> {/* Use flex-wrap and gap for horizontal layout */}
+        {/* Metode Filter */}
+        <div>
+          <label htmlFor="metode-filter" className="block text-sm font-medium text-gray-700">Metode</label>
+          <select
+            id="metode-filter"
+            name="metode-filter"
+            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            value={metodeFilter}
+            onChange={(e) => {
+              setMetodeFilter(e.target.value);
+              updateFilters({ metode: e.target.value });
+            }}
+          >
+            <option value="">Semua Metode</option>
+            {/* Add actual options here based on available data */}
+            <option value="Tender">Tender</option>
+            <option value="E-Purchasing">E-Purchasing</option>
+             {/* Add other methods if known */}
+          </select>
+        </div>
+        
+        {/* Jadwal Filter */}
+        <div>
+          <label htmlFor="jadwal-filter" className="block text-sm font-medium text-gray-700">Jadwal</label>
+          <select
+            id="jadwal-filter"
+            name="jadwal-filter"
+            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            value={jadwalFilter}
+            onChange={(e) => {
+              setJadwalFilter(e.target.value);
+              updateFilters({ jadwal: e.target.value });
+            }}
+          >
+            <option value="">Semua Jadwal</option>
+            {/* Options populated from generated month/year */}
+            {jadwalMonthYearOptions.map(option => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        
+        {/* Keterangan Filter */}
+        <div>
+          <label htmlFor="jenis-pengadaan-filter" className="block text-sm font-medium text-gray-700">Jenis Pengadaan</label>
+          <select
+            id="jenis-pengadaan-filter"
+            name="jenis-pengadaan-filter"
+            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            value={keteranganFilter} // Still using keteranganFilter state for now
+            onChange={(e) => {
+              setKeteranganFilter(e.target.value); // Still updating keteranganFilter state
+              updateFilters({ jenisPengadaan: e.target.value }); // Update filter with jenisPengadaan
+            }}
+          >
+            <option value="">Semua Jenis Pengadaan</option>
+            {/* Options populated from unique data */}
+            {jenisPengadaanOptions.map(option => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      
       {loadingState ? (
         <div className="text-center py-8">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -260,7 +360,7 @@ export default function TableSection({
               Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems > 0 ? totalItems.toLocaleString() : '0'} item
             </div>
             <div className="flex items-center space-x-2">
-              <button 
+              <button
                 onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
                 className={`p-2 rounded-md ${currentPage === 1 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
@@ -292,7 +392,7 @@ export default function TableSection({
                 );
               })}
               
-              <button 
+              <button
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={!shouldShowNextPage && currentPage === totalPages}
                 className={`p-2 rounded-md ${(!shouldShowNextPage && currentPage === totalPages) ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}

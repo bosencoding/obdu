@@ -55,10 +55,10 @@ export default function PaketTable({ data }) {
           <tr>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">No</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nama Paket</th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Satuan</th>
+            {/* Removed Satuan header */}
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Metode</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jadwal</th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pagu</th> {/* Added Pagu header */}
+            {/* Removed Pagu header */}
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Wilayah</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Keterangan</th>
@@ -75,7 +75,7 @@ export default function PaketTable({ data }) {
                   handleRowClick(row); // Call the original handler
                 }}
               >
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.no}</td><td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{row.nama}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.satuan}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.krema}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.jadwal}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.pagu}</td> {/* Added Pagu data cell */}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.no}</td><td className="px-6 py-4 text-sm font-medium text-gray-900">{row.nama}</td>{/* Removed Satuan data cell */}<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.krema}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.jadwal}</td>{/* Removed Pagu data cell */}
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.wilayah}</td><td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusColors[row.status] || 'bg-gray-100'} text-white`}>
                     {formatStatusLabel(row.status)}
@@ -85,7 +85,7 @@ export default function PaketTable({ data }) {
             ))
           ) : (
             <tr>
-              <td colSpan={9} className="px-6 py-4 text-center text-gray-500"> {/* Increased colspan */}
+              <td colSpan={7} className="px-6 py-4 text-center text-gray-500"> {/* Decreased colspan */}
                 Tidak ada data yang ditemukan
               </td>
             </tr>

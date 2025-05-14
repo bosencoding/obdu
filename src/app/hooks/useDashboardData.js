@@ -147,7 +147,12 @@ export function useDashboardData() {
     
     try {
       setLoadingState(prev => ({ ...prev, charts: true }));
-      const data = await getChartData(chartType, filtersToUse);
+      let data = await getChartData(chartType, filtersToUse);
+      
+      // Limit bar chart data to top 5
+      if (chartType === 'bar' && Array.isArray(data)) {
+        data = data.slice(0, 5);
+      }
       
       // Update state with fetched data
       setDashboardData(prev => ({

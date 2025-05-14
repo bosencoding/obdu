@@ -109,6 +109,21 @@ function buildQueryParams(filters = {}) {
   if (filters.minPagu !== undefined && filters.minPagu !== null) params.append('min_pagu', filters.minPagu);
   if (filters.maxPagu !== undefined && filters.maxPagu !== null) params.append('max_pagu', filters.maxPagu);
   if (filters.metode) params.append('metode', filters.metode);
+  
+  // Handle Jadwal filter: extract month number and send as 'month' parameter
+  if (filters.jadwal && filters.year) {
+    const [monthName, year] = filters.jadwal.split(' ');
+    const monthMap = {
+      'Januari': 1, 'Februari': 2, 'Maret': 3, 'April': 4, 'Mei': 5, 'Juni': 6,
+      'Juli': 7, 'Agustus': 8, 'September': 9, 'Oktober': 10, 'November': 11, 'Desember': 12
+    };
+    const monthNumber = monthMap[monthName];
+    if (monthNumber) {
+      params.append('month', monthNumber.toString());
+      // Year is already added on line 104: if (filters.year) params.append('year', filters.year);
+    }
+  }
+
   if (filters.jenisPengadaan) params.append('jenis_pengadaan', filters.jenisPengadaan);
   
   // Pagination parameters - ensure they're handled properly
