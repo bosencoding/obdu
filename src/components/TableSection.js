@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useData } from '@/app/context/DataContext';
 import PaketTable from './PaketTable';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import apiService from '@/app/apiService'; // Import apiService
+
 
 export default function TableSection({
   // Props below for backward compatibility
@@ -128,6 +130,42 @@ export default function TableSection({
     }
   }, [useDataContext, updateFilters, totalPages, currentPage, shouldShowNextPage]);
   
+  // Handle AIDA change
+  const handleAidaChange = useCallback(async (item, aidaValue) => {
+    if (!item || !item.id) {
+      console.error("Item or Item ID is missing for AIDA update.");
+      return;
+    }
+
+    const idSirup = item.id; // Assuming item.id is the id_sirup
+    const value = parseInt(aidaValue, 10);
+
+    try {
+      // Call the API to update AIDA
+      await apiService.updatePackageAida(idSirup, value);
+      console.log(`Successfully updated AIDA for ${idSirup} to ${value}`);
+
+      // Optionally, update the local state immediately for faster feedback
+      // This requires managing tableData state locally or having a context function
+      // For now, we'll rely on re-fetching the data after successful update
+
+      // Re-fetch the current page data to reflect the change
+      if (useDataContext && typeof fetchTableData === 'function') {
+        // Prevent update loops
+        isUpdatingRef.current = true;
+        await fetchTableData(currentPage, itemsPerPage);
+         setTimeout(() => {
+          isUpdatingRef.current = false;
+        }, 100);
+      }
+
+    } catch (error) {
+      console.error(`Error updating AIDA for ${idSirup}:`, error);
+      // TODO: Show user-friendly error message (e.g., toast notification)
+    }
+  }, [useDataContext, fetchTableData, currentPage, itemsPerPage]); // Added dependencies
+
+
   // Calculate current page data slice (for non-context mode)
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
@@ -276,14 +314,14 @@ export default function TableSection({
       </h2>
       
       {/* Filter Dropdowns */}
-      <div className="flex flex-wrap gap-4 mb-4"> {/* Use flex-wrap and gap for horizontal layout */}
+      <div className="flex flex-wrap items-end gap-4 mb-6"> {/* Use items-end to align labels */}
         {/* Metode Filter */}
-        <div>
-          <label htmlFor="metode-filter" className="block text-sm font-medium text-gray-700">Metode</label>
+        <div className="flex-grow min-w-[150px]"> {/* Added flex-grow and min-width */}
+          <label htmlFor="metode-filter" className="block text-sm font-medium text-gray-700 mb-1">Metode</label> {/* Added mb-1 */}
           <select
             id="metode-filter"
             name="metode-filter"
-            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
             value={metodeFilter}
             onChange={(e) => {
               setMetodeFilter(e.target.value);
@@ -297,14 +335,14 @@ export default function TableSection({
              {/* Add other methods if known */}
           </select>
         </div>
-        
+
         {/* Jadwal Filter */}
-        <div>
-          <label htmlFor="jadwal-filter" className="block text-sm font-medium text-gray-700">Jadwal</label>
+        <div className="flex-grow min-w-[150px]"> {/* Added flex-grow and min-width */}
+          <label htmlFor="jadwal-filter" className="block text-sm font-medium text-gray-700 mb-1">Jadwal</label> {/* Added mb-1 */}
           <select
             id="jadwal-filter"
             name="jadwal-filter"
-            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
             value={jadwalFilter}
             onChange={(e) => {
               setJadwalFilter(e.target.value);
@@ -318,14 +356,14 @@ export default function TableSection({
             ))}
           </select>
         </div>
-        
-        {/* Keterangan Filter */}
-        <div>
-          <label htmlFor="jenis-pengadaan-filter" className="block text-sm font-medium text-gray-700">Jenis Pengadaan</label>
+
+        {/* Jenis Pengadaan Filter */}
+        <div className="flex-grow min-w-[150px]"> {/* Added flex-grow and min-width */}
+          <label htmlFor="jenis-pengadaan-filter" className="block text-sm font-medium text-gray-700 mb-1">Jenis Pengadaan</label> {/* Added mb-1 */}
           <select
             id="jenis-pengadaan-filter"
             name="jenis-pengadaan-filter"
-            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+            className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
             value={keteranganFilter} // Still using keteranganFilter state for now
             onChange={(e) => {
               setKeteranganFilter(e.target.value); // Still updating keteranganFilter state
@@ -340,7 +378,7 @@ export default function TableSection({
           </select>
         </div>
       </div>
-      
+
       {loadingState ? (
         <div className="text-center py-8">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
@@ -352,14 +390,14 @@ export default function TableSection({
         <EmptyState />
       ) : (
         <>
-          <PaketTable data={displayData} />
-          
+          <PaketTable data={displayData} onAidaChange={handleAidaChange} /> {/* Pass the handler */}
+
           {/* Pagination controls */}
-          <div className="flex items-center justify-between mt-4 border-t pt-4">
-            <div className="text-sm text-gray-500">
+          <div className="flex flex-col sm:flex-row items-center justify-between mt-4 border-t pt-4"> {/* Added flex-col for small screens */}
+            <div className="text-sm text-gray-500 mb-2 sm:mb-0"> {/* Added margin-bottom for small screens */}
               Menampilkan {displayStartIndex} - {displayEndIndex} dari {totalItems > 0 ? totalItems.toLocaleString() : '0'} item
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1"> {/* Reduced space-x */}
               <button
                 onClick={() => handlePageChange(currentPage - 1)}
                 disabled={currentPage === 1}
@@ -368,22 +406,22 @@ export default function TableSection({
               >
                 <ChevronLeft size={16} />
               </button>
-              
+
               {/* Page numbers with ellipsis */}
               {pageNumbers.map((pageNum, index) => {
                 if (pageNum === '...') {
                   return (
-                    <span key={`ellipsis-${index}`} className="px-3 py-1 text-gray-400">
+                    <span key={`ellipsis-${index}`} className="px-2 py-1 text-gray-400"> {/* Adjusted padding */}
                       ...
                     </span>
                   );
                 }
-                
+
                 return (
                   <button
                     key={`page-${pageNum}`}
                     onClick={() => handlePageChange(pageNum)}
-                    className={`px-3 py-1 rounded-md ${currentPage === pageNum ? 'bg-blue-100 text-blue-600 font-medium' : 'text-gray-600 hover:bg-gray-100'}`}
+                    className={`px-3 py-1 rounded-md text-sm ${currentPage === pageNum ? 'bg-blue-600 text-white font-medium' : 'text-gray-700 hover:bg-gray-200'}`}
                     aria-label={`Page ${pageNum}`}
                     aria-current={currentPage === pageNum ? 'page' : undefined}
                   >
@@ -391,7 +429,7 @@ export default function TableSection({
                   </button>
                 );
               })}
-              
+
               <button
                 onClick={() => handlePageChange(currentPage + 1)}
                 disabled={!shouldShowNextPage && currentPage === totalPages}

@@ -8,6 +8,9 @@ import SummaryCards from '@/components/SummaryCards';
 import SecondarySection from '@/components/SecondarySection';
 import FilterBar from '@/components/FilterBar';
 import DashboardFooter from '@/components/DashboardFooter';
+import { type Filters, type Location, type Region, type DataContextType } from '../../types'; // Import types from types/index.ts
+import { type Dispatch, type SetStateAction } from 'react'; // Import types from react
+
 
 // Lazy-load heavy components for better performance
 const ChartsSection = dynamic(() => import('@/components/ChartsSection'), {
@@ -29,11 +32,10 @@ const TableSection = dynamic(() => import('@/components/TableSection'), {
 export default function ClientPage() {
   // Refs to prevent update loops
   const updatingFiltersRef = useRef(false);
-  const filtersTimeoutRef = useRef(null);
   const initialSyncDoneRef = useRef(false);
   
   // Debug logger
-  const logDebug = useCallback((message, data) => {
+  const logDebug = useCallback((message: string, data?: any) => {
     if (process.env.NODE_ENV === 'development') {
       console.log(`[ClientPage] ${message}`, data);
     }
@@ -47,14 +49,17 @@ export default function ClientPage() {
     filters,
     updateFilters,
     error
-  } = useData();
+  } = useData() as DataContextType; // Cast useData hook result to DataContextType
   
   // Local UI state (will update DataContext on submit/debounce)
   const [searchQuery, setSearchQuery] = useState('');
   const [filterYear, setFilterYear] = useState('2025');
-  const [selectedRegion, setSelectedRegion] = useState(null);
-  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [isPending, startTransition] = useTransition();
+  
+  // Correct type for filtersTimeoutRef
+  const filtersTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Single effect for syncing state from context
   // This prevents multiple state updates triggering multiple API calls
@@ -71,17 +76,22 @@ export default function ClientPage() {
       }
       
       // Batch state updates to prevent multiple renders
-      const updates = {};
+      const updates: Partial<Filters> = {}; // Use Partial<Filters>
       
+      // Check if filters properties exist before accessing
       if (filters.searchQuery !== undefined && filters.searchQuery !== searchQuery) {
         setSearchQuery(filters.searchQuery);
-        updates.searchQuery = true;
+        updates.searchQuery = filters.searchQuery; // Store actual value
       }
       
       if (filters.year !== undefined && filters.year.toString() !== filterYear) {
         setFilterYear(filters.year.toString());
-        updates.year = true;
+        updates.year = filters.year; // Store actual value
       }
+      
+      // Note: selectedRegion and selectedLocation are not synced from context here
+      // as they are primarily driven by user interaction in FilterBar.
+      // If context needed to control these, additional logic would be required.
       
       // Only log if something actually changed
       if (Object.keys(updates).length > 0) {
@@ -91,12 +101,12 @@ export default function ClientPage() {
   }, [filters, searchQuery, filterYear, logDebug]);
   
   // Create filters object for context update - memoized to prevent unnecessary recalculations
-  const prepareFilters = useMemo(() => {
-    const newFilters = {};
+  const prepareFilters = useMemo((): Filters => { // Explicitly type the return value
+    const newFilters: Filters = {}; // Explicitly type newFilters
     
     // Add filter year
     if (filterYear) {
-      newFilters.year = parseInt(filterYear);
+      newFilters.year = parseInt(filterYear, 10); // Ensure base 10
     }
     
     // Add search query if provided
@@ -114,8 +124,14 @@ export default function ClientPage() {
         newFilters.daerahTingkat = null;
         newFilters.kotaKab = null;
       } else if (selectedRegion.id.startsWith('region-')) {
-        newFilters.provinsi = selectedRegion.provinsi;
-        newFilters.daerahTingkat = selectedRegion.type;
+        // Ensure selectedRegion.provinsi and selectedRegion.type are not null/undefined before assigning
+        if (selectedRegion.provinsi !== null && selectedRegion.provinsi !== undefined) {
+           newFilters.provinsi = selectedRegion.provinsi;
+        }
+        if (selectedRegion.type !== null && selectedRegion.type !== undefined) {
+           newFilters.daerahTingkat = selectedRegion.type;
+        }
+       
         // Extract kota_kab from the name by removing the type
         const kotaKab = selectedRegion.name.replace(selectedRegion.type || '', '').trim();
         newFilters.kotaKab = kotaKab;
@@ -128,17 +144,25 @@ export default function ClientPage() {
       newFilters.kotaKab = null;
     }
     
-    // Add location filter if selected
+    // Add location filter if selected (This part seems contradictory with the user's request
+    // to NOT filter the table based on AIDA selection. I will keep it for now but
+    // note that handleLocationChange below has been modified to prevent this path).
+    // If the user confirms AIDA selection should *never* filter the table, this block
+    // should be removed or modified.
+    // Removed selectedLocation filtering based on user feedback.
+    // If you need to re-enable filtering by AIDA selection, uncomment the block below.
+    /*
     if (selectedLocation) {
-      newFilters.regionId = selectedLocation.id;
-      newFilters.provinsi = selectedLocation.provinsi;
-      if (selectedLocation.type) {
-        newFilters.daerahTingkat = selectedLocation.type;
-        // Extract kota_kab from the name by removing the type
-        const kotaKab = selectedLocation.name.replace(selectedLocation.type || '', '').trim();
-        newFilters.kotaKab = kotaKab;
-      }
+       newFilters.regionId = selectedLocation.id;
+       newFilters.provinsi = selectedLocation.provinsi;
+       if (selectedLocation.type) {
+         newFilters.daerahTingkat = selectedLocation.type;
+         // Extract kota_kab from the name by removing the type
+         const kotaKab = selectedLocation.name.replace(selectedLocation.type || '', '').trim();
+         newFilters.kotaKab = kotaKab;
+       }
     }
+    */
     
     return newFilters;
   }, [filterYear, selectedRegion, selectedLocation, searchQuery]);
@@ -164,6 +188,7 @@ export default function ClientPage() {
       
       if (typeof updateFilters === 'function') {
         startTransition(() => {
+          // Pass the filters object to updateFilters
           updateFilters(currentFilters);
           
           // Reset updating flag after a small delay
@@ -182,24 +207,28 @@ export default function ClientPage() {
   // These handlers update local state but don't trigger immediate API calls
   // Instead, they rely on the useEffect below to batch updates
   
-  // Handle location selection changes
-  const handleLocationChange = useCallback((location) => {
-    logDebug('Location changed', location);
+  // Handle location selection changes (from AutocompleteSearch)
+  const handleLocationChange = useCallback((location: Location | null) => { // Explicitly type location
+    logDebug('Location selected from AIDA dropdown', location);
     
-    // Update local state
+    // Update local state only
     setSelectedLocation(location);
     
-    // Reset region selection when location is selected
-    if (location) {
-      setSelectedRegion(null);
-    }
+    // Do NOT call updateFiltersWithDebounce() here based on user feedback.
+    // This prevents the unwanted redirect/modal and keeps the selection for future use.
+    // Note: This means selecting a location from the AIDA dropdown will no longer filter the main table.
+    // If you need to trigger a filter update based on AIDA selection in the future,
+    // you would re-enable updateFiltersWithDebounce() here.
     
-    // Schedule debounced update
-    updateFiltersWithDebounce();
-  }, [logDebug, updateFiltersWithDebounce]);
+    // If you need to reset region when a location is selected from AIDA:
+    // if (location) {
+    //   setSelectedRegion(null);
+    // }
+    
+  }, [logDebug]); // Removed updateFiltersWithDebounce from dependencies
 
-  // Handle region selection changes
-  const handleRegionChange = useCallback((region) => {
+  // Handle region selection changes (from RegionDropdown)
+  const handleRegionChange = useCallback((region: Region | null) => { // Explicitly type region
     logDebug('Region changed', region);
     
     // Update local state
@@ -212,10 +241,10 @@ export default function ClientPage() {
     
     // Schedule debounced update
     updateFiltersWithDebounce();
-  }, [logDebug, updateFiltersWithDebounce]);
+  }, [logDebug, updateFiltersWithDebounce]); // Keep updateFiltersWithDebounce here to filter by region
 
-  // Handler for search query changes
-  const handleSearchQueryChange = useCallback((query) => {
+  // Handler for search query changes (from FilterBar search input)
+  const handleSearchQueryChange = useCallback((query: string) => { // Explicitly type query
     logDebug('Search query changed', query);
     
     // Update local state
@@ -223,7 +252,7 @@ export default function ClientPage() {
     
     // Schedule debounced update
     updateFiltersWithDebounce();
-  }, [logDebug, updateFiltersWithDebounce]);
+  }, [logDebug, updateFiltersWithDebounce]); // Keep updateFiltersWithDebounce here to filter by search query
 
   // Show error state if DataContext reported an error
   if (error && error.dashboard) {
@@ -259,16 +288,17 @@ export default function ClientPage() {
       />
       
       <FilterBar
-  searchQuery={searchQuery}
-  setSearchQuery={handleSearchQueryChange}
-  filterYear={filterYear}
-  setFilterYear={setFilterYear}
-  selectedRegion={selectedRegion}
-  setSelectedRegion={handleRegionChange}
-  selectedLocation={selectedLocation}
-  setSelectedLocation={handleLocationChange}
-  updateFilters={updateFilters} // Add this line to pass the function
-/>
+        searchQuery={searchQuery}
+        setSearchQuery={handleSearchQueryChange}
+        filterYear={filterYear}
+        setFilterYear={setFilterYear as Dispatch<SetStateAction<string>>} // Cast to correct type
+        selectedRegion={selectedRegion}
+        setSelectedRegion={handleRegionChange}
+        selectedLocation={selectedLocation}
+        setSelectedLocation={handleLocationChange}
+        // updateFilters prop is not needed in FilterBar as it uses DataContext directly
+        // Removed: updateFilters={updateFilters}
+      />
 
       
       <ChartsSection 

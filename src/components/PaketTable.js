@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { getPackageDetails } from '@/app/apiService'; // Import the new API function
+import { getPackageDetails, updatePackageAida } from '@/app/apiService'; // Import the new API function
 
-export default function PaketTable({ data }) {
+export default function PaketTable({ data }) { // Removed onAidaChange prop
   const statusColors = {
     'Sesuai': 'bg-emerald-500',
     'Dibth Flnxnnm': 'bg-amber-500',
@@ -59,7 +59,7 @@ export default function PaketTable({ data }) {
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Metode</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jadwal</th>
             {/* Removed Pagu header */}
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Wilayah</th>
+            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">AIDA</th> {/* Changed header to AIDA */}
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Keterangan</th>
           </tr>
@@ -75,12 +75,44 @@ export default function PaketTable({ data }) {
                   handleRowClick(row); // Call the original handler
                 }}
               >
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.no}</td><td className="px-6 py-4 text-sm font-medium text-gray-900">{row.nama}</td>{/* Removed Satuan data cell */}<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.krema}</td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.jadwal}</td>{/* Removed Pagu data cell */}
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.wilayah}</td><td className="px-6 py-4 whitespace-nowrap">
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{row.no}</td>
+                <td className="px-6 py-4 text-sm font-medium text-gray-900">{row.nama}</td>
+                {/* Removed Satuan data cell */}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.krema}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.jadwal}</td>
+                {/* Removed Pagu data cell */}
+                {/* AIDA Dropdown Column */}
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <select
+                    value={row.aida || 0} // Use row.aida, default to 0
+                    onChange={async (e) => {
+                      const newAidaValue = parseInt(e.target.value, 10);
+                      console.log(`Attempting to update AIDA for item ${row.id} to ${newAidaValue}`);
+                      try {
+                        // Call the API service function to update AIDA
+                        await updatePackageAida(row.id, newAidaValue);
+                        console.log(`AIDA updated successfully for item ${row.id}`);
+                        // TODO: Optionally update local state or refetch data to reflect change
+                      } catch (error) {
+                        console.error(`Failed to update AIDA for item ${row.id}:`, error);
+                        // TODO: Show error message to user
+                      }
+                    }}
+                    className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                  >
+                    <option value={0}>No Activity</option>
+                    <option value={1}>Attention</option>
+                    <option value={2}>Interest</option>
+                    <option value={3}>Desire</option>
+                    <option value={4}>Action</option>
+                  </select>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
                   <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusColors[row.status] || 'bg-gray-100'} text-white`}>
                     {formatStatusLabel(row.status)}
                   </span>
-                </td><td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.keterangan}</td>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{row.keterangan}</td>
               </tr>
             ))
           ) : (

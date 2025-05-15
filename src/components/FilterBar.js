@@ -1,6 +1,6 @@
 // src/components/FilterBar.js
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, Filter, Download, ChevronDown } from 'lucide-react';
+import { Search, Filter, Download, ChevronDown, X } from 'lucide-react';
 import RegionDropdown from './RegionDropdown';
 import AutocompleteSearch from './AutoCompleteSearch';
 import { useData } from '@/app/context/DataContext';
@@ -26,26 +26,6 @@ export default function FilterBar({
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery || '');
   const years = ['2021', '2022', '2023', '2024', '2025'];
-  
-  // Single effect to sync local state with context
-  // This prevents multiple state updates triggering multiple API calls
-  useEffect(() => {
-    // Skip if we're in the middle of updating to prevent loops
-    if (isUpdatingRef.current) return;
-    
-    // Sync search query from context if needed
-    if (contextFilters?.searchQuery !== undefined &&
-        contextFilters.searchQuery !== localSearchQuery) {
-      setLocalSearchQuery(contextFilters.searchQuery);
-    }
-    
-    // Sync search query from props if needed
-    if (searchQuery !== undefined &&
-        searchQuery !== localSearchQuery &&
-        searchQuery !== contextFilters?.searchQuery) {
-      setLocalSearchQuery(searchQuery);
-    }
-  }, [contextFilters?.searchQuery, searchQuery, localSearchQuery]);
   
   // Batched filter updates to reduce API calls
   const batchFilterUpdates = useCallback((updates) => {
@@ -242,8 +222,22 @@ export default function FilterBar({
             placeholder="Cari paket..."
             value={localSearchQuery}
             onChange={handleSearchChange}
-            className="pl-9 pr-4 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="pl-9 pr-9 py-2 border border-gray-300 rounded-md w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+          {localSearchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setLocalSearchQuery('');
+                setSearchQuery('');
+                batchFilterUpdates({ searchQuery: '' });
+              }}
+              className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+              aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
           <button type="submit" className="sr-only">Cari</button>
         </div>
          {/* Location Search and Region Dropdown */}

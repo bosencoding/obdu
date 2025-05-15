@@ -13,32 +13,45 @@ export function useData() {
     console.error('useData must be used within a DataProvider');
     // Return empty data
     return {
-      dashboardStats: {},
-      chartData: { pie: [], bar: [] },
+      dashboardStats: { // Match DashboardStats structure
+        totalAnggaran: '0',
+        totalPaket: 0,
+        tender: 0,
+        dikecualikan: 0,
+        epkem: 0,
+        pengadaanLangsung: 0,
+      },
+      chartData: { pie: [], bar: [] }, // Match ChartData structure
       tableData: [],
       totalItems: 0,
       regions: [],
-      filters: {},
-      loading: {
-        dashboard: false,
+      filters: {}, // Match Filters structure (empty object is a valid default)
+      loading: { // Match LoadingState structure
         initial: true,
+        dashboard: false,
         regions: false,
         stats: false,
         charts: false,
         table: false
       },
-      error: {
+      error: { // Match ErrorState structure
         dashboard: null,
         regions: null,
         table: null,
         charts: null
       },
-      updateFilters: () => {},
-      fetchAllDashboardData: () => Promise.resolve(),
+      // Dummy functions matching DataContextType signatures
+      updateFilters: (newFilters) => newFilters || {},
+      fetchAllDashboardData: () => Promise.resolve({
+        stats: { totalAnggaran: '0', totalPaket: 0, tender: 0, dikecualikan: 0, epkem: 0, pengadaanLangsung: 0 },
+        charts: { pie: [], bar: [] },
+        table: { data: [], totalItems: 0 },
+        regions: [],
+      }),
       fetchTotalItemCount: () => Promise.resolve(0),
-      fetchDashboardStats: () => Promise.resolve({}),
-      fetchChartData: () => Promise.resolve([]),
-      fetchTableData: () => Promise.resolve([])
+      fetchDashboardStats: () => Promise.resolve({ totalAnggaran: '0', totalPaket: 0, tender: 0, dikecualikan: 0, epkem: 0, pengadaanLangsung: 0 }),
+      fetchChartData: (chartType, currentFilters) => Promise.resolve([]),
+      fetchTableData: (page, limit, currentFilters) => Promise.resolve([]),
     };
   }
   return context;

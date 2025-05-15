@@ -236,7 +236,8 @@ export function useDashboardData() {
         satuan: item.satuan_kerja || '',
         krema: item.metode || '',
         jadwal: item.pemilihan || 'Belum ditentukan',
-        wilayah: formatWilayah(item),
+        // Removed 'wilayah' and added 'aida' with default value 0
+        aida: 0,
         status: determineStatus(item),
         keterangan: item.jenis_pengadaan || '',
         pagu: item.pagu || '-' // Added pagu field to processed data

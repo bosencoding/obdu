@@ -397,6 +397,27 @@ export async function getPackageDetails(id) {
 }
 
 /**
+ * Update AIDA value for a specific package
+ * @param {string | number} idSirup - The id_sirup of the package
+ * @param {number} aidaValue - The new AIDA value (0-4)
+ * @returns {Promise<Object>} - Response from the API
+ */
+export async function updatePackageAida(idSirup, aidaValue) {
+  if (!idSirup) {
+    throw new Error('id_sirup is required to update AIDA.');
+  }
+  if (aidaValue === undefined || aidaValue === null) {
+     throw new Error('AIDA value is required to update AIDA.');
+  }
+  
+  return apiRequest(`/sales/${idSirup}`, {
+    method: 'POST',
+    body: JSON.stringify({ aida: aidaValue, person: "admin" }), // Added person field
+  });
+}
+
+
+/**
  * Handle unexpected API errors
  * @param {Error} error - The error that occurred
  * @param {string} source - The source of the error (for logging)
@@ -419,6 +440,7 @@ export default {
   getChartData,
   getWilayahList,
   getPackageCount,
-  getPackageDetails, // Added getPackageDetails to export
+  getPackageDetails,
+  updatePackageAida, // Added updatePackageAida to export
   handleApiError
 };
