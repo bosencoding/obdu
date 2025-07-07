@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8000';
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://lkpp-api:8000';
 
 export async function POST(request, { params }) {
   console.log('[Proxy API] POST handler for /api/sales/[id] triggered'); // Added log

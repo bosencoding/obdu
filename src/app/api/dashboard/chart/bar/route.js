@@ -6,7 +6,7 @@ export async function GET(request) {
     const searchParams = url.searchParams;
 
     // Construct the URL for the FastAPI backend
-    const backendUrl = `http://localhost:8000/api/dashboard/chart/bar?${searchParams.toString()}`;
+    const backendUrl = `http://lkpp-api:8000/api/dashboard/chart/bar?${searchParams.toString()}`;
 
     console.log(`[Proxy API] Forwarding GET request to: ${backendUrl}`);
 

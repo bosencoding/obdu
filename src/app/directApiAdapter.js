@@ -3,7 +3,7 @@
 // Gunakan file ini sebagai fallback jika API proxy tidak berfungsi
 
 // URL backend langsung
-const BACKEND_API_URL = 'http://localhost:8000';
+const BACKEND_API_URL = 'http://lkpp-api:8000';
 
 /**
  * Request API langsung tanpa melalui proxy

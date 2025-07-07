@@ -8,7 +8,7 @@ import {
 } from '@/app/apiService';
 import { calculateTotalItems, formatWilayah, determineStatus } from '@/utils/dataHelpers';
 
-export function useDashboardData() {
+export function useDashboardData() { 
   // Refs to prevent loops
   const isMountedRef = useRef(false);
   const pendingFetchRef = useRef(null);

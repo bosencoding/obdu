@@ -16,7 +16,11 @@ function LoadingSkeleton() {
   )
 }
 
-export default function RootLayout({ children }) {
+interface RootLayoutProps {
+  children: React.ReactNode;
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="id">
       <body className="min-h-screen bg-gray-50">

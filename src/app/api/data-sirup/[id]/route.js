@@ -3,8 +3,8 @@ import { NextResponse } from 'next/server';
 export async function GET(request, { params }) {
   try {
     const { id } = params;
-    const backendUrl = `http://localhost:8000/data-sirup/${id}`;
-
+    const backendUrl = `http://lkpp-api:8000/data-sirup/${id}`;
+    
     console.log(`[Proxy API] Forwarding GET request to: ${backendUrl}`);
 
     const response = await fetch(backendUrl);
